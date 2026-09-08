@@ -5,7 +5,7 @@
 
 - 조사일 — 2026.09.08
 - 담당 — 개발 B (이수현)
-- 범위 — 지연 버퍼 계열, 갑툭튀 오디오 특징, 트리거 워닝 상용 제품, CLIP zero-shot 안전성, 평가 데이터셋
+- 범위 — 지연 버퍼 계열, 점프 스케어 오디오 특징, 놀람 반사, 트리거 워닝 상용 제품, CLIP zero-shot 안전성, 평가 데이터셋
 
 ## 요약 — 이 조사로 바뀐 것
 
@@ -40,6 +40,10 @@
 | 분류 체계 | 예측 불가형 / 지속 상태형 | 본 연구가 정의 |
 | 대상 전체 | 민감 콘텐츠 | "유해"는 가치판단이 들어가므로 쓰지 않는다 |
 | **쓰지 않는다** | 갑툭튀 · 깜놀 | 일반 표현 |
+
+> **적용 범위** — 이 PR에서는 용어표와 관련연구 절, 각 문서의 표 행까지 맞췄다.
+> **README 본문 전반(단계별 계획 · 위험 표 · 논문 프레이밍 문장 등 20여 곳)의 치환은 후속 작업**이다.
+> 그때까지 두 표기가 섞여 있으면 **이 표가 기준이다.**
 
 **자극과 반응을 구분한다.** 점프 스케어는 영상 안의 **자극**이고 우리가 탐지하는 대상이며,
 놀람 반사는 사람에게 일어나는 **반응**이고 우리가 막으려는 것이다.
@@ -149,9 +153,22 @@ README 위험 표의 「CLIP zero-shot 정밀도」 행을 추정이 아니라 �
   3) **시간 차원** — 사건 시점만이 아니라 **직전 anticipation 단계**가 놀람 크기를 좌우,
   4) 부정과 긍정이 함께 오는 양가적 정서
 - Baird(2000) *The Startle Effect: Implications for Spectator Cognition and Media Theory* — 영화학의 고전
-- 청각 놀람 반응(ASR) 문헌의 자극 파라미터 — 사람에서 **80~90 dB 이상**의 급작스러운 자극이 ASR을 유발하고,
-  **강도가 같아도 상승 시간(rise time)이 길면 놀람 반사가 아니라 심장방어반응만** 나타난다.
-  상승 시간이 **2 ms에서 100 ms로 늘수록 반응이 감소**한다. 잠복기는 6~8 ms
+- T. D. Blumenthal, "Stimulus rise time, intensity, and bandwidth effects on acoustic startle
+  amplitude and probability," *Psychophysiology* 23(6), 1986 · "The startle response to acoustic stimuli
+  near startle threshold: Effects of stimulus rise and fall time, duration, and intensity,"
+  *Psychophysiology* 25, 607–611, 1988 ([PMID 3186888](https://pubmed.ncbi.nlm.nih.gov/3186888/))
+  — **상승 시간이 놀람 반응의 진폭과 발생 확률을 좌우한다**는 것을 사람 대상으로 보인 계열.
+  강도가 같아도 상승이 완만하면 놀람 반사가 아니라 방어반응 쪽으로 간다
+- F. K. Graham, "Distinguishing among orienting, defense, and startle reflexes," in *The Orienting
+  Reflex in Humans*, 1979 — 놀람과 방어반응을 가르는 고전
+- T. D. Blumenthal et al., "Committee report: Guidelines for human startle eyeblink
+  electromyographic studies," *Psychophysiology* 42(1), 2005
+  ([PDF](https://www.biopac.com/wp-content/uploads/Startle-Guidelines-Blumenthal.pdf))
+  — 사람 놀람 반사 측정의 표준 지침. 사람의 눈깜박 잠복기는 R2 성분 기준 **25~35 ms**다
+  (설치류 문헌의 한 자릿수 ms와 혼동하지 않는다)
+
+정리하면 자극 쪽 조건은 **80~90 dB 이상의 강도**와 **짧은 상승 시간** 둘이다.
+반사 잠복기 자체는 3초 앞서 개입하는 본 연구의 설계와 무관하므로 근거로 쓰지 않는다.
 
 **설계에 미치는 영향 둘.**
 
@@ -173,7 +190,7 @@ README 위험 표의 「CLIP zero-shot 정밀도」 행을 추정이 아니라 �
 | 지연 버퍼로 사전 차단 | ❌ 선례 있음 | PSE 연구 [§1.1](#11-지연-버퍼-기반-사전-차단--pse-연구에-선례-있음) |
 | **버퍼 시간을 탐지에 활용** | ❌ **선례 있음 (신규 발견)** | Time Buffers [§1.2](#12-버퍼-시간을-탐지에-활용--online-action-detection에-선례-있음) |
 | **버퍼 안에서 의미론적 사건 탐지** | ❌ **선례 있음 (신규 발견)** | 위와 동일 — 기존 README 결론 문장은 폐기 |
-| 갑툭튀 오디오 특징 | ❌ 선례 있음 | affective computing [§1.3](#13-갑툭튀-오디오-특징--affective-computing에-선례-있음) |
+| 점프 스케어 오디오 특징 | ❌ 선례 있음 | affective computing [§1.3](#13-점프-스케어-오디오-특징--affective-computing에-선례-있음) |
 | 공포증 콘텐츠 블러 확장 | ❌ 상용 제품 존재 | [§1.4](#14-트리거-워닝-브라우저-확장--상용-제품-있음) |
 | **개입을 위해 없던 지연을 도입** | ✅ | 기존 계열은 이미 존재하는 버퍼를 이용하거나 오프라인 분석 |
 | **재생 중 개입 (online intervention)** | ✅ | 기존 계열의 목적은 정확도·검색. Time Buffers는 NSFW 알림을 동기로만 언급하고 미구현 |
@@ -300,7 +317,7 @@ AudioSet 온톨로지에 `Siren`, `Screaming`, `Explosion`, `Gunshot` 클래스�
 | **지연 3초** | online action detection에서 약 2~3초 버퍼로 THUMOS'14 mAP +13.8% 보고 | [Time Buffers](https://arxiv.org/abs/2010.03016) |
 | **파인튜닝 대신 zero-shot** | 안전성 파인튜닝이 일반화 성능을 크게 떨어뜨린다는 보고 | [SafeR-CLIP](https://arxiv.org/abs/2511.16743) |
 | **점프 스케어에 오디오 우선** | energy entropy 기반 급작스러운 큰 소리는 affective computing의 표준 특징 | [Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) |
-| **상승 시간(rise time)을 특징에 포함** | 강도가 같아도 상승이 완만하면 놀람 반사가 나타나지 않음 | ASR 문헌 §1.6 |
+| **상승 시간(rise time)을 특징에 포함** | 상승 시간이 놀람 반응의 진폭·발생 확률을 좌우 | Blumenthal (1986, 1988) [§1.6](#16-놀람-반사--점프-스케어의-심리생리학적-근거) |
 | **직전 정적 구간을 특징에 포함** | anticipation 단계가 놀람 크기를 좌우한다는 4요소 정의 | [Acosta & Sears (2026)](https://doi.org/10.3389/fpsyg.2025.1569394) |
 | **사이렌은 임계값만** | AudioSet 온톨로지에 Siren·Screaming·Explosion·Gunshot 클래스가 이미 있음 | AudioSet / YAMNet |
 | **04단계 목표를 F1 0.6대로** | 경량 zero-shot VLM의 문헌 성능이 0.55 안팎, 최고치도 GPT-4V 0.709 | [UnsafeBench](https://arxiv.org/pdf/2405.03486) |

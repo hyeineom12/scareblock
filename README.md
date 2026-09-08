@@ -152,7 +152,7 @@
 | 지연 버퍼로 사전 차단 | ❌ PSE 연구에 선례 |
 | 버퍼 시간을 탐지에 활용 | ❌ online action detection에 선례 |
 | 버퍼 안에서 의미론적 사건 탐지 | ❌ 위와 동일 |
-| 갑툭튀 오디오 특징 | ❌ affective computing에 선례 |
+| 점프 스케어 오디오 특징 | ❌ affective computing에 선례 |
 | 공포증 콘텐츠 블러 확장 | ❌ 상용 제품 존재 |
 | **개입을 위해 없던 지연을 도입** | ✅ 기존 계열은 이미 있는 버퍼를 이용하거나 오프라인 분석 |
 | **재생 중 개입 (online intervention)** | ✅ 기존 계열의 목적은 정확도·검색. Time Buffers도 NSFW 알림은 동기로만 언급하고 미구현 |
