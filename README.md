@@ -7,8 +7,12 @@
 **지연 기반 다중 민감 콘텐츠 사전 차단 프레임워크.**
 
 유튜브 영상을 3초 늦게 보여주고, 그 3초 동안 트리거 장면을 찾아 사용자에게 도달하기 전에 가린다.
-갑툭튀(jump scare)는 이 구조가 필요한 유일한 카테고리이자 첫 flagship 구현체이고,
+점프 스케어(jump scare)는 이 구조가 필요한 유일한 카테고리이자 첫 flagship 구현체이고,
 프레임워크는 처음부터 여러 카테고리를 겨냥한다.
+
+> **용어** — 논문·발표에서는 구어인 "갑툭튀" 대신 국내 학술 논문에서 통용되는 **점프 스케어**를 쓴다.
+> 사용자에게 일어나는 반응은 **놀람 반사**(startle reflex), 계산 문제로는
+> **돌발 시청각 사건 탐지**로 부른다. 전체 용어표는 [docs/related-work.md](docs/related-work.md#용어)에 있다.
 
 ### 범위 선언
 
@@ -121,9 +125,9 @@
 **동기로만 언급하고 구현하지 않으며, red flag는 알림이지 차단이 아니다.**
 본 연구는 그 자리를 구현하고 사용자 실험으로 검증한다.
 
-### 갑툭튀 오디오 특징 — affective computing에 선례 있음
+### 점프 스케어 오디오 특징 — affective computing에 선례 있음
 
-"갑툭튀(jump scare)"라는 이름의 논문은 없으나, 02단계에서 쓸 특징 설계는 이미 표준이다.
+02단계에서 쓸 특징 설계는 이미 표준이다.
 
 - [Affective Content Analysis in Comedy and Horror Videos by Audio Emotional Event Detection](https://ieeexplore.ieee.org/document/1521500/) — 공포 영상 오디오 감정 이벤트 탐지
 - [Affective Video Retrieval: Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) — **energy entropy 기반 급작스러운 큰 소리 측정**, **혈흔 탐지**가 표준 특징
@@ -148,7 +152,7 @@
 | 지연 버퍼로 사전 차단 | ❌ PSE 연구에 선례 |
 | 버퍼 시간을 탐지에 활용 | ❌ online action detection에 선례 |
 | 버퍼 안에서 의미론적 사건 탐지 | ❌ 위와 동일 |
-| 갑툭튀 오디오 특징 | ❌ affective computing에 선례 |
+| 점프 스케어 오디오 특징 | ❌ affective computing에 선례 |
 | 공포증 콘텐츠 블러 확장 | ❌ 상용 제품 존재 |
 | **개입을 위해 없던 지연을 도입** | ✅ 기존 계열은 이미 있는 버퍼를 이용하거나 오프라인 분석 |
 | **재생 중 개입 (online intervention)** | ✅ 기존 계열의 목적은 정확도·검색. Time Buffers도 NSFW 알림은 동기로만 언급하고 미구현 |
@@ -212,7 +216,7 @@ CLIP zero-shot 프롬프트 설계, VLM 비교 실험 총괄.
 - **개발 A** — 크롬 확장 MV3 뼈대 + content script 후킹, 영상 링버퍼(VideoFrame 3초치),
   오디오 지연(WebAudio DelayNode), 블러 오버레이 + 음량 페이드다운
 - **개발 B** — 평가셋 v1(영상 20개, 갑툭튀 타임스탬프 수동 라벨링 + 확장 카테고리 멀티라벨 동시 태깅),
-  오디오 특징 추출 프로토타입(RMS, 스펙트럼 플럭스, 직전 정적 구간),
+  오디오 특징 추출 프로토타입(RMS, **상승 시간 dRMS/dt**, 스펙트럼 플럭스, 직전 정적 구간),
   **라벨 기준 문서화 — 아래 [클립 추출 규칙](#클립-추출-규칙)을 같은 문서에 포함한다**
 
 **M1** — 가짜 타임스탬프로 블러 걸리는 계약 확정.
