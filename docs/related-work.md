@@ -27,6 +27,25 @@
    없으면 막히는 항목이 아니므로 지도교수를 만날 일이 있을 때 묶어서 처리한다.
    [§3.2](#32-liris-accede--mediaeval-emotional-impact-of-movies)
 
+## 용어
+
+"갑툭튀"는 구어다. 국내 학술 논문은 **"점프 스케어"** 를 그대로 음차해 쓰고 있으므로 그 표기를 따른다.
+자체 조어를 만들면 "왜 이 말을 쓰나"가 새 질문이 되므로 통용 표기를 우선한다.
+
+| 맥락 | 쓸 말 | 근거 |
+|---|---|---|
+| **현상 지칭 (주 용어)** | **점프 스케어**(jump scare) | 국내 학술 논문에서 통용 |
+| 사용자에게 일어나는 것 | **놀람 반사**(startle reflex) · **청각 놀람 반응**(ASR) | 국내 심리학 표준어 |
+| 계산 문제 정의 | **돌발 시청각 사건 탐지**(sudden-onset audiovisual event detection) | 본 연구가 정의 |
+| 분류 체계 | 예측 불가형 / 지속 상태형 | 본 연구가 정의 |
+| 대상 전체 | 민감 콘텐츠 | "유해"는 가치판단이 들어가므로 쓰지 않는다 |
+| **쓰지 않는다** | 갑툭튀 · 깜놀 | 일반 표현 |
+
+**자극과 반응을 구분한다.** 점프 스케어는 영상 안의 **자극**이고 우리가 탐지하는 대상이며,
+놀람 반사는 사람에게 일어나는 **반응**이고 우리가 막으려는 것이다.
+이 구분이 서면 [E5 사용자 실험](#62-우리가-실제로-실험할-수-있는-것)이 만족도 조사가 아니라
+**"자극을 차단해 반응이 줄었는가"** 를 묻는 인과 실험으로 위치가 잡힌다.
+
 ## 1. 선행 연구 계열
 
 ### 1.1 지연 버퍼 기반 사전 차단 — PSE 연구에 선례 있음
@@ -86,14 +105,15 @@ README 「관련 연구와 차별점」에 비교표로 정리되어 있다.
    게다가 red flag는 알림이지 차단이 아니다. 관련연구에 이를 명시하면
    **"기존 연구가 가능성만 언급한 자리를 구현하고 사용자 실험까지 했다"** 는 포지션이 선다
 
-### 1.3 갑툭튀 오디오 특징 — affective computing에 선례 있음
+### 1.3 점프 스케어 오디오 특징 — affective computing에 선례 있음
 
-"jump scare"라는 이름의 논문은 없으나 02단계에서 쓸 특징 설계는 이미 표준이다.
+02단계에서 쓸 특징 설계는 이미 표준이다.
 
 - [Affective Content Analysis in Comedy and Horror Videos by Audio Emotional Event Detection](https://ieeexplore.ieee.org/document/1521500/)
 - [Affective Video Retrieval: Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) — energy entropy 기반 급작스러운 큰 소리 측정, 혈흔 탐지가 표준 특징
 - [Affective Video Content Analysis: A Multidisciplinary Insight](https://dl.acm.org/doi/10.1109/TAFFC.2017.2661284) — 서베이
 - [Multi-modal learning for affective content analysis in movies](https://link.springer.com/article/10.1007/s11042-018-5662-9)
+- [공포 영화에 쓰인 청각적 장치들이 공포 유발 및 내러티브 전달에 미치는 영향에 대한 연구](https://scienceon.kisti.re.kr/srch/selectPORSrchArticle.do?cn=DIKO0014783827) — 국내 선행연구. 정보처리학회 논문 관련연구 절에 넣는다
 
 → 검증된 특징의 재사용이라 안전하나 "우리가 처음 제안한다"고 쓰지 않는다.
 이 계열은 전부 오프라인 분석·검색이 목적이고 재생 중 개입이 아니다.
@@ -118,6 +138,34 @@ README 위험 표의 「CLIP zero-shot 정밀도」 행을 추정이 아니라 �
 - [Safe-CLIP: Removing NSFW Concepts from Vision-and-Language Models](https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/07009.pdf) (ECCV 2024)
 - [SafeR-CLIP](https://arxiv.org/abs/2511.16743) — 안전성 파인튜닝이 일반화 성능을 떨어뜨리는 문제. 우리가 파인튜닝 대신 zero-shot을 쓰는 근거로도 인용 가능
 
+### 1.6 놀람 반사 — 점프 스케어의 심리생리학적 근거
+
+점프 스케어를 호러 팬 용어가 아니라 **측정 가능한 자극 클래스**로 정의하게 해주는 계열이다.
+02단계 오디오 규칙의 근거가 엔지니어링 감이 아니라 문헌이 된다.
+
+- [(Re)Considering the jump scare in four elements](https://doi.org/10.3389/fpsyg.2025.1569394)
+  (Acosta & Sears, *Frontiers in Psychology* 16:1569394, 2026) — **점프 스케어를 4요소로 정의한다.**
+  1) 단순 반사가 아니라 행동 반응을 유발하는 미적 경험, 2) **다중모달**(급작스러운 시각 침입 + 불협화 청각 폭발),
+  3) **시간 차원** — 사건 시점만이 아니라 **직전 anticipation 단계**가 놀람 크기를 좌우,
+  4) 부정과 긍정이 함께 오는 양가적 정서
+- Baird(2000) *The Startle Effect: Implications for Spectator Cognition and Media Theory* — 영화학의 고전
+- 청각 놀람 반응(ASR) 문헌의 자극 파라미터 — 사람에서 **80~90 dB 이상**의 급작스러운 자극이 ASR을 유발하고,
+  **강도가 같아도 상승 시간(rise time)이 길면 놀람 반사가 아니라 심장방어반응만** 나타난다.
+  상승 시간이 **2 ms에서 100 ms로 늘수록 반응이 감소**한다. 잠복기는 6~8 ms
+
+**설계에 미치는 영향 둘.**
+
+1. **상승 시간(rise time)을 특징에 넣어야 한다.** 문헌이 말하는 것은 얼마나 큰가가 아니라
+   **얼마나 빨리 커지는가**다. 01단계 특징 목록이 `RMS · 스펙트럼 플럭스 · 직전 정적 구간`이었는데
+   시간축 상승 기울기(dRMS/dt)가 빠져 있었다. 추가한다
+2. **직전 정적 구간 특징이 문헌으로 정당화된다.** Acosta & Sears의 3번 요소(anticipation 단계가
+   놀람 크기를 키움)가 우리가 이미 넣어둔 특징을 뒷받침한다. 엔지니어링 감이 아니라 현상 정의에서
+   나온 특징이 된다
+
+**점프 스케어 자동 탐지 연구는 여전히 확인되지 않는다.** 현상을 정의한 문헌은 있으나
+자동 탐지를 다룬 연구가 없다는 것이 정확한 진술이며, 정의가 있는데 아무도 자동으로 잡지 않는다는 점에서
+오히려 더 강한 주장이다.
+
 ## 2. 차별점 정리 (갱신)
 
 | 주장 | 상태 | 근거 |
@@ -130,6 +178,7 @@ README 위험 표의 「CLIP zero-shot 정밀도」 행을 추정이 아니라 �
 | **개입을 위해 없던 지연을 도입** | ✅ | 기존 계열은 이미 존재하는 버퍼를 이용하거나 오프라인 분석 |
 | **재생 중 개입 (online intervention)** | ✅ | 기존 계열의 목적은 정확도·검색. Time Buffers는 NSFW 알림을 동기로만 언급하고 미구현 |
 | **lookahead 요구량 기준 아키텍처 분류** | ✅ | Time Buffers는 모든 액션에 균일 버퍼 — 정독 확인 |
+| **점프 스케어 자동 탐지** | ✅ | 현상 정의 문헌은 있으나(Acosta & Sears 2026) 자동 탐지 연구 미확인 |
 | **브라우저 내 실행 × 다중 카테고리 × zero-shot 확장의 조합** | ✅ | 조합 자체가 공백 |
 
 ## 3. 평가 데이터 후보
@@ -250,7 +299,9 @@ AudioSet 온톨로지에 `Siren`, `Screaming`, `Explosion`, `Gunshot` 클래스�
 |---|---|---|
 | **지연 3초** | online action detection에서 약 2~3초 버퍼로 THUMOS'14 mAP +13.8% 보고 | [Time Buffers](https://arxiv.org/abs/2010.03016) |
 | **파인튜닝 대신 zero-shot** | 안전성 파인튜닝이 일반화 성능을 크게 떨어뜨린다는 보고 | [SafeR-CLIP](https://arxiv.org/abs/2511.16743) |
-| **갑툭튀에 오디오 우선** | energy entropy 기반 급작스러운 큰 소리는 affective computing의 표준 특징 | [Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) |
+| **점프 스케어에 오디오 우선** | energy entropy 기반 급작스러운 큰 소리는 affective computing의 표준 특징 | [Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) |
+| **상승 시간(rise time)을 특징에 포함** | 강도가 같아도 상승이 완만하면 놀람 반사가 나타나지 않음 | ASR 문헌 §1.6 |
+| **직전 정적 구간을 특징에 포함** | anticipation 단계가 놀람 크기를 좌우한다는 4요소 정의 | [Acosta & Sears (2026)](https://doi.org/10.3389/fpsyg.2025.1569394) |
 | **사이렌은 임계값만** | AudioSet 온톨로지에 Siren·Screaming·Explosion·Gunshot 클래스가 이미 있음 | AudioSet / YAMNet |
 | **04단계 목표를 F1 0.6대로** | 경량 zero-shot VLM의 문헌 성능이 0.55 안팎, 최고치도 GPT-4V 0.709 | [UnsafeBench](https://arxiv.org/pdf/2405.03486) |
 | **DRM 콘텐츠 제외** | EME 규격상 픽셀·오디오 접근이 원천 차단 | 브라우저 규격 |
