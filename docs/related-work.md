@@ -9,16 +9,23 @@
 
 ## 요약 — 이 조사로 바뀐 것
 
-1. **차별점 문장을 다시 좁혀야 한다.** 라이브 스트리밍의 송출 지연 버퍼를 탐지에 활용하는
-   연구가 이미 있다([Time Buffers](https://arxiv.org/abs/2010.03016)). README가 PSE 비교 뒤에
-   결론으로 쓴 "의미론적 사건을 lookahead로 잡는다가 새롭다"는 이 논문이 이미 하는 일이다.
-   → 남는 주장은 **"있는 버퍼를 쓴 것이 아니라, 개입을 위해 없던 지연을 만들었다"** 이다. [§1.2](#12-버퍼-시간을-탐지에-활용--online-action-detection에-선례-있음)
+1. **차별점 문장을 다시 좁혔다.** 라이브 스트리밍의 송출 지연 버퍼를 탐지에 활용하는
+   연구가 이미 있다([Time Buffers](https://arxiv.org/abs/2010.03016), **정독 완료**).
+   README가 PSE 비교 뒤에 결론으로 쓴 "의미론적 사건을 lookahead로 잡는다가 새롭다"는
+   이 논문이 이미 하는 일이다. → 남는 주장은
+   **"있는 버퍼를 쓴 것이 아니라, 개입을 위해 없던 지연을 만들었다"** 이다.
+   겹치는 것은 여기까지이고, **lookahead 요구량 분류 · 차단 · 클라이언트 실시간은 겹치지 않음을
+   정독으로 확인**했다. 덤으로 3초의 근거와 미구현 갭을 얻었다.
+   [§1.2](#12-버퍼-시간을-탐지에-활용--online-action-detection에-선례-있음)
 2. **평가셋으로 쓸 수 있는 공개 데이터는 사실상 XD-Violence 하나다.** 나머지는 전부 영화 기반이라
    [범위 선언](../README.md#범위-선언)의 DRM 제외에 걸린다. 공개 데이터셋의 역할을
    "평가셋"이 아니라 "라벨 기준 정의 · 특징 검증 · 사전학습"으로 못박는다. [§3.5](#35-결론--공개-데이터셋의-역할)
-3. **LIRIS-ACCEDE는 지도교수 서명이 필요하고 처리에 최대 1주가 걸린다.** EULA가 "학술기관 정규직"
-   서명을 요구해 학생 단독 신청이 불가능하고, 무료 이메일(gmail 등)로 보내면 반려된다.
-   09.10 제안서보다 이게 먼저다. [§3.2](#32-liris-accede--mediaeval-emotional-impact-of-movies)
+3. **데이터셋 착수 순서는 XD-Violence 먼저, LIRIS-ACCEDE는 선택이다.** XD-Violence는 즉시 받을 수 있고
+   용도가 더 급하다 — 라벨링 30~50시간을 시작하기 전에 오디오 규칙이 되는지부터 검증할 수 있다.
+   LIRIS-ACCEDE는 **지도교수 서명이 필요하고**(EULA가 "학술기관 정규직" 서명을 요구해 학생 단독 신청 불가)
+   무료 이메일로 보내면 반려되며 처리에 최대 1주가 걸린다. 논문 실험 절을 강화하는 옵션이지
+   없으면 막히는 항목이 아니므로 지도교수를 만날 일이 있을 때 묶어서 처리한다.
+   [§3.2](#32-liris-accede--mediaeval-emotional-impact-of-movies)
 
 ## 1. 선행 연구 계열
 
@@ -37,12 +44,15 @@ README 「관련 연구와 차별점」에 비교표로 정리되어 있다.
 
 ### 1.2 버퍼 시간을 탐지에 활용 — online action detection에 선례 있음
 
-**이번 조사에서 새로 발견한 계열이고, 지금까지 확인된 것 중 주장이 가장 크게 겹친다.**
+**이번 조사에서 새로 발견한 계열이다. 2026.09.08 정독 완료.**
 
-- [Online Action Detection in Streaming Videos with Time Buffers](https://arxiv.org/abs/2010.03016) (Zhang et al., 2020)
-  — 라이브 스트리밍에는 최신 캡처 프레임과 시청 프레임 사이에 송출 지연이 존재한다는 점에 착안해,
-  그 **버퍼 시간을 탐지에 활용하는 문제 설정**을 제안한다. flattened I3D + window-based suppression으로
-  표준 temporal action detection 벤치마크 3종에서 기존 online 모델 대비 정확도 향상을 보인다
+- [Online Action Detection in Streaming Videos with Time Buffers](https://arxiv.org/abs/2010.03016)
+  (Bowen Zhang, Hao Chen, Meng Wang, Yuanjun Xiong, 2020)
+  — 라이브 스트리밍에는 송출 지연이 원래 존재한다는 점에 착안해, 그 **버퍼 시간을 탐지에 활용하는
+  문제 설정 자체**를 제안한다. 지연의 출처로 네트워크 전송과 함께 **욕설·노출·방송사고를 막기 위한
+  의도적 지연**을 든다. flattened I3D + window-based suppression.
+  실험 버퍼는 78프레임 = **약 2~3초**. THUMOS'14 · ActivityNet v1.3 · HACS Segment에서 검증,
+  THUMOS'14 기준 **mAP +13.8%**
 - [Real-time Online Video Detection with Temporal Smoothing Transformers (TeSTra)](https://arxiv.org/abs/2209.09236) — 실시간 online detection의 latency-정확도 트레이드오프
 - [Temporally smooth online action detection using cycle-consistent future anticipation (FATSnet)](https://www.sciencedirect.com/science/article/abs/pii/S0031320321001412)
 - [Online human action detection and anticipation in videos: A survey](https://www.sciencedirect.com/science/article/abs/pii/S0925231222003617) — 계열 전체 지도
@@ -50,20 +60,31 @@ README 「관련 연구와 차별점」에 비교표로 정리되어 있다.
 **왜 문제인가.** README는 PSE 비교표 다음에 "버퍼를 쓴다는 사실은 새롭지 않다.
 의미론적 사건을 lookahead로 잡는다가 새롭다"로 결론을 냈다. Time Buffers 논문이 정확히 그것을 한다 —
 버퍼 안에서 의미론적 사건(action)을 탐지한다. PSE 비교표에서 "저수준 신호 vs 의미론적 사건"으로
-갈라놓은 그 쪽에 이 논문이 이미 서 있다.
+갈라놓은 그 쪽에 이 논문이 이미 서 있다. **겹치는 것은 여기까지다.**
 
-**그래도 남는 차이.**
+**남는 차이 — 정독으로 확인함.**
 
-| | Time Buffers (2020) | 본 연구 |
-|---|---|---|
-| 버퍼의 출처 | 라이브 방송에 **이미 존재하는** 송출 지연 | VOD에 **의도적으로 도입하는** 지연 (시청 지연을 비용으로 지불) |
-| 목적 | 탐지 **정확도 향상** | 탐지 후 **사용자 도달 전 개입** |
-| 실행 위치 | 서버·오프라인 규모 모델(I3D) | **브라우저 클라이언트 실시간** |
-| 산출 | 벤치마크 점수 | 동작하는 확장 + 사용자 실험 |
+| | Time Buffers (2020) | 본 연구 | 확인 근거 |
+|---|---|---|---|
+| 버퍼의 출처 | 라이브 방송에 **이미 존재하는** 송출 지연 | VOD에 **의도적으로 도입하는** 지연 | 문제 설정 자체가 "있는 지연을 쓰자" |
+| 카테고리별 lookahead 요구량 | **구분하지 않음.** 모든 액션에 균일한 버퍼 적용 | 예측 불가형 / 지속 상태형으로 분리 | 분류 개념 부재 확인 |
+| 목적 | 탐지 **정확도(mAP)** | 탐지 후 **사용자 도달 전 차단** | 개입·차단·필터링 미구현 |
+| 실행 위치 | **언급 없음** (알고리즘 성능만 보고) | **브라우저 클라이언트 실시간** | 배포 위치·FPS 논의 없음 |
+| 산출 | 벤치마크 점수 | 동작하는 확장 + 사용자 실험 | |
 
 → **주장을 "버퍼 활용"이 아니라 "개입을 위해 없던 지연을 만들어낸 설계 결정"에 둔다.**
 공짜로 있는 버퍼를 이용한 것과, 사용자에게 3초를 손해 보게 하면서까지 lookahead를 확보한 것은
 설계 문제로서 다르다. 이쪽이 오히려 방어하기 쉽다.
+
+**정독으로 얻은 것 둘.**
+
+1. **3초라는 숫자에 근거가 생겼다.** 이 논문의 실험 버퍼가 약 2~3초이고 그 구간에서 mAP 13.8%
+   향상을 보고했다. 우리 3초를 **"선행 연구에서 유효성이 보고된 구간을 채택했다"** 로 쓸 수 있다.
+   "왜 하필 3초냐"에 대한 답이 임의 선택에서 인용 있는 설계 결정으로 바뀐다
+2. **이 논문이 스스로 갭을 열어놨다.** 응용 예시로 *"라이브 웹캐스트에서 NSFW(노출·폭력)가
+   탐지되면 실시간 red flag를 보낸다"* 를 들지만 **동기로만 언급하고 구현하지 않는다.**
+   게다가 red flag는 알림이지 차단이 아니다. 관련연구에 이를 명시하면
+   **"기존 연구가 가능성만 언급한 자리를 구현하고 사용자 실험까지 했다"** 는 포지션이 선다
 
 ### 1.3 갑툭튀 오디오 특징 — affective computing에 선례 있음
 
@@ -103,8 +124,8 @@ README 위험 표의 「CLIP zero-shot 정밀도」 행을 추정이 아니라 �
 | 갑툭튀 오디오 특징 | ❌ 선례 있음 | affective computing [§1.3](#13-갑툭튀-오디오-특징--affective-computing에-선례-있음) |
 | 공포증 콘텐츠 블러 확장 | ❌ 상용 제품 존재 | [§1.4](#14-트리거-워닝-브라우저-확장--상용-제품-있음) |
 | **개입을 위해 없던 지연을 도입** | ✅ | 기존 계열은 이미 존재하는 버퍼를 이용하거나 오프라인 분석 |
-| **재생 중 개입 (online intervention)** | ✅ | 기존 계열의 목적은 정확도·검색이지 차단이 아님 |
-| **lookahead 요구량 기준 아키텍처 분류** | ✅ | 선행 사례 확인되지 않음 |
+| **재생 중 개입 (online intervention)** | ✅ | 기존 계열의 목적은 정확도·검색. Time Buffers는 NSFW 알림을 동기로만 언급하고 미구현 |
+| **lookahead 요구량 기준 아키텍처 분류** | ✅ | Time Buffers는 모든 액션에 균일 버퍼 — 정독 확인 |
 | **브라우저 내 실행 × 다중 카테고리 × zero-shot 확장의 조합** | ✅ | 조합 자체가 공백 |
 
 ## 3. 평가 데이터 후보
@@ -193,7 +214,7 @@ AudioSet 온톨로지에 `Siren`, `Screaming`, `Explosion`, `Gunshot` 클래스�
 
 | 순서 | 문헌 | 왜 | 상태 |
 |---|---|---|---|
-| 1 | [Time Buffers](https://arxiv.org/abs/2010.03016) | 차별점 문장이 여기 걸림. 09.10 제안서 전 필수 | ☐ |
+| 1 | [Time Buffers](https://arxiv.org/abs/2010.03016) | 차별점 문장이 여기 걸림 | ☑ 2026.09.08 정독 — [§1.2](#12-버퍼-시간을-탐지에-활용--online-action-detection에-선례-있음) |
 | 2 | [UnsafeBench](https://arxiv.org/pdf/2405.03486) | 위험 표의 CLIP 정밀도 행을 인용으로 교체 | ☐ |
 | 3 | [XD-Violence (ECCV 2020)](https://roc-ng.github.io/XD-Violence/) | 데이터셋 구조·평가 프로토콜 파악 | ☐ |
 | 4 | [Flikcer](https://arxiv.org/pdf/2108.09491) | PSE 비교표의 근거. 이미 표는 작성됨 | ☐ |
@@ -203,8 +224,6 @@ AudioSet 온톨로지에 `Siren`, `Screaming`, `Explosion`, `Gunshot` 클래스�
 
 ## 5. 미해결
 
-- **Time Buffers 논문이 lookahead 요구량 기준 분류에 해당하는 개념을 쓰는지** 정독 전까지 확정 불가.
-  쓰지 않는 것으로 보이나, 쓴다면 [§2](#2-차별점-정리-갱신)의 마지막 ✅ 두 줄 중 하나가 무너진다
 - **Where's the Jump 스크래핑의 ToS 적법성** 미확인. 라벨 기준 참고용이라 소량 수동 열람으로
   대체 가능한지 먼저 판단한다
 - **XD-Violence 라이선스와 재배포 조건** 미확인. 06단계 재현 절차의
