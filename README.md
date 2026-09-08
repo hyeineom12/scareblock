@@ -113,7 +113,7 @@
 | 이름 | GitHub | 역할 |
 |---|---|---|
 | 엄혜인 | [@hyeineom12](https://github.com/hyeineom12) | <!-- TODO: 개발 A / 개발 B 중 확정 --> |
-| — | [@nocked115](https://github.com/nocked115) | <!-- TODO: 개발 A / 개발 B 중 확정 --> |
+| 이수현 | [@nocked115](https://github.com/nocked115) | <!-- TODO: 개발 A / 개발 B 중 확정 --> |
 
 ### 역할 정의
 
