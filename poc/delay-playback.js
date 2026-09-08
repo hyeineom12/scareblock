@@ -3,7 +3,7 @@
  *
  * 유튜브 영상 페이지에서 콘솔에 통째로 붙여넣으면 동작한다.
  * 영상을 DELAY_SEC 만큼 늦게 보여주고, 그 사이 라이브(지연 전) 오디오에서
- * 갑툭튀 후보를 찾아 사용자가 그 장면에 도달하기 전에 블러를 건다.
+ * 점프 스케어 후보를 찾아 사용자가 그 장면에 도달하기 전에 블러를 건다.
  *
  *   scareblockDemo.stop()          원복
  *   scareblockDemo.blurNow(1.5)    수동 블러 — 지금 소리 나는 장면을 도달 전에 가린다
@@ -160,7 +160,7 @@
   }
   requestAnimationFrame(render);
 
-  // ── 조악한 갑툭튀 규칙: 조용하다가 갑자기 커지면 ────────────────────────
+  // ── 조악한 점프 스케어 규칙: 조용하다가 갑자기 커지면 ───────────────────
   // 임계값은 모두 최근 최댓값 대비 상대비다. 절대값을 쓰면 AnalyserNode가
   // element volume 뒤를 듣기 때문에 영상이 아니라 유튜브 볼륨 슬라이더에
   // 종속된다 — 낮추면 급등을 못 잡고, 높이면 "조용" 조건이 깨져 역시 못 잡는다.
@@ -203,7 +203,7 @@
         detections++;
         scheduleBlur(video.currentTime, 1.5);
         console.log(
-          `[scareblock] 갑툭튀 후보 t=${video.currentTime.toFixed(2)}s ` +
+          `[scareblock] 점프 스케어 후보 t=${video.currentTime.toFixed(2)}s ` +
           `rms=${cur.toFixed(3)} (직전 중앙값 ${median.toFixed(3)}, 최근 최댓값 ${peak.toFixed(3)}) ` +
           `→ ${DELAY_SEC}s 뒤 도달 전 블러`
         );
