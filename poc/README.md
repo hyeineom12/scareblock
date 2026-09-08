@@ -10,10 +10,15 @@ DRM · 픽셀 접근 · 오디오 접근을 한 번에 재고 표로 찍는다. 
 **대상 콘텐츠** — 유튜브 일반 업로드 영상. `전제 3종 통과`가 나와야 한다.
 
 **경계 확인** — DRM이 실제로 막는 것을 보려면 Widevine 자산이 필요하다.
-유튜브 영화·대여는 구매해야 하므로, 공개 테스트 자산을 쓴다.
+유튜브 영화·대여는 구매해야 하므로 공개 테스트 자산을 쓴다.
 
-- [Shaka Player 데모](https://shaka-player-demo.appspot.com/) → 자산 목록에서 **Widevine** 표시가 있는 것 재생
-- 여기서 `DRM: 보호됨`과 픽셀 차단이 나오면 범위 선언의 근거 화면이 된다
+1. [Shaka Player 데모](https://shaka-player-demo.appspot.com/)를 연다
+2. 상단 **`ALL CONTENT`** 탭을 누른다
+3. 필터 드롭다운에서 **`Widevine DRM`** 을 고른다 (자산 31개로 좁혀진다)
+4. **`Angel One (multicodec, multilingual, Widevine)`** 을 재생한다
+5. 재생이 시작되면 스크립트를 붙여넣는다
+
+`DRM: 보호됨`과 픽셀 차단이 나오면 범위 선언의 근거 화면이 된다.
 
 오디오 검사는 `createMediaElementSource`를 호출해 그 페이지의 오디오 경로를 WebAudio로
 바꾼다. 원복하려면 새로고침한다.
