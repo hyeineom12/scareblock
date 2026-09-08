@@ -43,6 +43,61 @@
 앞부분을 미리 훑어 트리거 타임스탬프를 계산해둘 수 있다.
 3초 지연 버퍼는 이 사전 스캔이 못 따라잡은 구간의 안전망으로 동작한다.
 
+## 관련 연구와 차별점
+
+선행 조사 결과 **동일 조합을 다룬 연구는 없다.** 다만 개별 요소는 대부분 선례가 있으므로,
+"우리가 처음 하는 일"이 아니라 **"따로 있던 것을 처음 잇는 구조"** 로 주장한다.
+
+### 지연 버퍼 기반 사전 차단 — PSE 연구에 선례 있음
+
+가장 가까운 선행 계열이다. 광과민성 발작(PSE) 도메인에는 프레임 버퍼로 위험 자극을
+사용자 도달 전에 완화하는 연구가 이미 있다.
+
+- [Flikcer: A Chrome Extension to Resolve Online Epileptogenic Visual Content with Real-Time Luminance Frequency Analysis](https://arxiv.org/pdf/2108.09491) — 크롬 확장 + 실시간 영상 분석 + 유해 콘텐츠 차단. **구조적으로 가장 가까움**
+- [Parallel scheme for real-time detection of photosensitive seizures](https://www.sciencedirect.com/science/article/abs/pii/S0010482516000123) — 실시간 스트리밍 탐지, 8프레임 버퍼
+- [A new adaptive temporal filter: Application to photosensitive seizure patients](https://pubmed.ncbi.nlm.nih.gov/11145469/) — 프레임 메모리 버퍼로 사전 감쇠
+- [Evaluating Conformance of Video Safety Tools for Photosensitive Epilepsy](https://pmc.ncbi.nlm.nih.gov/articles/PMC12249941/) — 해당 도구군의 평가 프레임워크
+
+| | PSE 연구 | 본 연구 |
+|---|---|---|
+| 버퍼 크기 | ~8프레임 (약 0.3초) | 3초 |
+| 버퍼의 목적 | **시간축 필터링** (플리커 평활화) | **사건 탐지 후 도달 전 차단** |
+| 탐지 대상 | 저수준 신호 (휘도 주파수) | **의미론적 사건** (갑툭튀·유혈·거미) |
+| 카테고리 | 단일 고정 | 다중 · zero-shot 확장 |
+
+→ **버퍼를 쓴다는 사실은 새롭지 않다. "의미론적 사건을 lookahead로 잡는다"가 새롭다.**
+
+### 갑툭튀 오디오 특징 — affective computing에 선례 있음
+
+"갑툭튀(jump scare)"라는 이름의 논문은 없으나, 02단계에서 쓸 특징 설계는 이미 표준이다.
+
+- [Affective Content Analysis in Comedy and Horror Videos by Audio Emotional Event Detection](https://ieeexplore.ieee.org/document/1521500/) — 공포 영상 오디오 감정 이벤트 탐지
+- [Affective Video Retrieval: Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) — **energy entropy 기반 급작스러운 큰 소리 측정**, **혈흔 탐지**가 표준 특징
+- [Affective Video Content Analysis: A Multidisciplinary Insight](https://dl.acm.org/doi/10.1109/TAFFC.2017.2661284) — 서베이
+- [Multi-modal learning for affective content analysis in movies](https://link.springer.com/article/10.1007/s11042-018-5662-9)
+
+→ 검증된 특징을 재사용하는 것이므로 안전하나, **"우리가 처음 제안한다"고 쓰지 않는다.**
+결정적 차이는 이 계열이 전부 **오프라인 분석·검색**이 목적이고 **재생 중 개입이 아니라는 점**이다.
+
+### 트리거 워닝 브라우저 확장 — 상용 제품 있음
+
+- [PhobiaBlocker](https://chromewebstore.google.com/detail/phobiablocker/gjgghmahciffkcelboddbmkjkjchjnfk) — 공포증 이미지·영상 블러. **주변 텍스트 NLP** 기반
+- [Trigger Warning Extension](https://chromewebstore.google.com/detail/trigger-warning-extension/emlcofoghclkckaajlejfoegblhahoff) · [Youtube Trigger Warning](https://chromewebstore.google.com/detail/youtube-trigger-warning/dhaighcmggigocehbgigdbmgpkhcekgl?hl=en) · SKIP IT — **크라우드소싱 타임스탬프·메타데이터** 기반
+
+→ **픽셀을 보지 않는다.** 라벨이 없는 영상에는 무력하고 실시간이 아니다.
+심사에서 "이미 있는 것 아닌가"가 나올 지점이므로 관련연구에 선제적으로 명시한다.
+
+### 정리 — 무엇이 새로운가
+
+| 주장 | 상태 |
+|---|---|
+| 지연 버퍼로 사전 차단 | ❌ PSE 연구에 선례 |
+| 갑툭튀 오디오 특징 | ❌ affective computing에 선례 |
+| 공포증 콘텐츠 블러 확장 | ❌ 상용 제품 존재 |
+| **재생 중 개입 (online intervention)** | ✅ 기존 계열은 오프라인 분석이 목적 |
+| **lookahead 요구량 기준 아키텍처 분류** | ✅ 선행 사례 확인되지 않음 |
+| **의미론적 다중 카테고리 × 브라우저 내 실행 × zero-shot 확장의 조합** | ✅ 조합 자체가 공백 |
+
 ## 프로젝트 정보
 
 | 항목 | 내용 |
@@ -76,9 +131,10 @@ CLIP zero-shot 프롬프트 설계, VLM 비교 실험 총괄.
 코드를 짜기 전에 "이게 되는가"부터 답한다.
 
 - **개발 A** — 콘솔 검증 3종(DRM 여부 · 픽셀 접근 · 오디오 접근), 지연 재생 PoC
-- **개발 B** — 관련 연구 조사(SponsorBlock, Where's the Jump?, PSE 필터, LIRIS-ACCEDE,
-  VLM 콘텐츠 모더레이션, 온라인 행동탐지 time buffer), 평가용 후보 영상 수집,
-  확장 카테고리 taxonomy 초안
+- **개발 B** — 관련 연구 조사(SponsorBlock, Where's the Jump?, LIRIS-ACCEDE,
+  VLM 콘텐츠 모더레이션, 온라인 행동탐지 time buffer),
+  **[관련 연구와 차별점](#관련-연구와-차별점)의 PSE 계열·affective computing·상용 확장 3종 정독 및 차별점 문장 확정**,
+  평가용 후보 영상 수집, 확장 카테고리 taxonomy 초안
 
 **M0** — 3초 지연 재생 화면을 붙인 제안서 제출 + 확장 카테고리 taxonomy 초안
 
