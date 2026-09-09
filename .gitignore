@@ -1,0 +1,12 @@
+# 개인 작업 파일 — 저장소에 올리지 않는다
+_local/
+
+# OS·에디터
+.DS_Store
+Thumbs.db
+*.swp
+
+# 의존성·빌드 산출물
+node_modules/
+dist/
+build/
