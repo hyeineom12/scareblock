@@ -41,9 +41,8 @@
 | 대상 전체 | 민감 콘텐츠 | "유해"는 가치판단이 들어가므로 쓰지 않는다. 다만 **외부 문헌이 자기 분류 용어로 쓰는 경우는 그대로 인용한다**(예: UnsafeBench의 "unsafe categories") |
 | **쓰지 않는다** | 갑툭튀 · 깜놀 | 일반 표현 |
 
-> **적용 범위** — 저장소 전체(README · 이 문서 · `docs/proposal.md` · `poc/`)의 본문 표기를 이 표에 맞춘다.
-> 이 PR이 직접 바꾸는 것은 이 문서와 `poc/`이고, **README 본문은 [#9](https://github.com/hyeineom12/scareblock/pull/9)가 맡는다**
-> — 둘이 다 머지되어야 이 문장이 참이 된다.
+> **적용 범위** — 이 표가 저장소 전체의 기준이다. 두 표기가 섞여 있는 자리가 보이면 이 표가 이긴다.
+> 「갑툭튀」는 용어 자체를 설명할 때만 쓴다.
 > 그 뒤 「갑툭튀」가 남는 자리는 **용어 자체를 설명하는 곳뿐**이다 — 이 절의 두 곳과 각 문서 첫머리의 용어 노트.
 
 **자극과 반응을 구분한다.** 점프 스케어는 영상 안의 **자극**이고 우리가 탐지하는 대상이며,
@@ -136,7 +135,7 @@ README 「관련 연구와 차별점」에 비교표로 정리되어 있다.
 README 위험 표의 「CLIP zero-shot 정밀도」 행을 추정이 아니라 인용으로 바꿀 수 있다.
 
 - [UnsafeBench: Benchmarking Image Safety Classifiers on Real-World and AI-Generated Images](https://arxiv.org/pdf/2405.03486)
-  — **정독 완료.** 11개 유해 카테고리에서 전용 분류기 5종과 범용 VLM 3종을 비교한다.
+  — **정독 완료.** 11개 "unsafe" 카테고리에서 전용 분류기 5종과 범용 VLM 3종을 비교한다.
   전체 최고가 **GPT-4V F1 0.709**, 경량 zero-shot은 **LLaVA 0.549 · InstructBLIP 0.559**,
   CLIP 임베딩 기반 전용 분류기 Q16은 0.533. 카테고리별로는 Sexual·Shocking이 약 0.8로 가장 높고
   Hate·Harassment·Self-Harm이 0.6 미만. **Violence는 GPT-4V 기준 0.738**
