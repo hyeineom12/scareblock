@@ -86,7 +86,7 @@
 가장 가까운 선행 계열이다. 광과민성 발작(PSE) 도메인에는 프레임 버퍼로 위험 자극을
 사용자 도달 전에 완화하는 연구가 이미 있다.
 
-- [Flikcer: A Chrome Extension to Resolve Online Epileptogenic Visual Content with Real-Time Luminance Frequency Analysis](https://arxiv.org/pdf/2108.09491) — 크롬 확장 + 실시간 영상 분석 + 유해 콘텐츠 차단. **구조적으로 가장 가까움**
+- [Flikcer: A Chrome Extension to Resolve Online Epileptogenic Visual Content with Real-Time Luminance Frequency Analysis](https://arxiv.org/pdf/2108.09491) — 크롬 확장 + 실시간 영상 분석 + 발작 유발 콘텐츠 차단. **구조적으로 가장 가까움**
 - [Parallel scheme for real-time detection of photosensitive seizures](https://www.sciencedirect.com/science/article/abs/pii/S0010482516000123) — 실시간 스트리밍 탐지, 8프레임 버퍼
 - [A new adaptive temporal filter: Application to photosensitive seizure patients](https://pubmed.ncbi.nlm.nih.gov/11145469/) — 프레임 메모리 버퍼로 사전 감쇠
 - [Evaluating Conformance of Video Safety Tools for Photosensitive Epilepsy](https://pmc.ncbi.nlm.nih.gov/articles/PMC12249941/) — 해당 도구군의 평가 프레임워크
