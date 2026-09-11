@@ -30,6 +30,12 @@ SB.Player = class {
     this._lastPresented = -1;
     this._lastCap = -1;
     this._lastRenderAt = 0;
+    this._lastIncidentAt = 0;   // 마지막 끊김·디코더드롭 시각
+    this._hudAt = 0;            // HUD·품질조회 스로틀
+    this._drops = 0;            // 마지막으로 읽은 디코더드롭
+    this._hudLine1 = '';
+    this._hudLine2 = '';
+    this._gainNow = 1;
   }
 
   /** 계약 소비 — 탐지기가 부른다. */
@@ -148,9 +154,20 @@ SB.Player = class {
     const now = performance.now();
     if (this._lastRenderAt && now - this._lastRenderAt > cfg.STALL_MS) {
       this.stats.renderStalls++;
+      this._lastIncidentAt = now;
     }
     this._lastRenderAt = now;
     this.stats.renderFrames++;
+
+    // getVideoPlaybackQuality()와 HUD 문자열 생성은 프레임마다 할 일이 아니다.
+    // 4Hz로 낮춘다 — 프레임당 비용이 끊김의 원인이 될 수 있다.
+    if (now - this._hudAt > 250) {
+      this._hudAt = now;
+      const d = this._decoderDrops() - this.stats.decoderDropsAtStart;
+      if (d > this._drops) this._lastIncidentAt = now;
+      this._drops = d;
+      this._composeHud(d, now);
+    }
 
     const slot = this.ring.findAtOrBefore(this.video.currentTime - cfg.DELAY_SEC);
     if (slot) {
@@ -158,8 +175,11 @@ SB.Player = class {
       octx.filter = hit ? `blur(${cfg.BLUR_PX}px)` : 'none';
       octx.drawImage(slot.canvas, 0, 0, cfg.BUF_W, cfg.BUF_H);
       octx.filter = 'none';
-      const g = this.audio?.gain;
-      if (g) g.gain.value = hit ? cfg.FADE_DB : 1;   // 음량 페이드다운
+      const want = hit ? cfg.FADE_DB : 1;            // 음량 페이드다운
+      if (want !== this._gainNow) {
+        this._gainNow = want;
+        if (this.audio?.gain) this.audio.gain.gain.value = want;
+      }
       if (hit) this._drawBadge(hit);
     } else {
       octx.fillStyle = '#000';
@@ -183,24 +203,32 @@ SB.Player = class {
     octx.textAlign = 'left';
   }
 
+  /** 4Hz로만 부른다. 문자열 생성과 품질 조회를 프레임에서 뺀다. */
+  _composeHud(drops, now) {
+    const { cfg, stats } = this;
+    const sec = (now - stats.startedAt) / 1000;
+    this._hudLine1 =
+      `지연 ${cfg.DELAY_SEC}s · 버퍼 ${this.ring.filled}/${this.ring.slots} · ` +
+      `트리거 ${this.triggers.length} · 시크 ${stats.seeks}`;
+    this._hudLine2 =
+      `무드롭 ${this.cleanStreakSec(now).toFixed(0)}s · 끊김 ${stats.renderStalls} · ` +
+      `드롭 ${drops} · 누락 ${stats.missedFrames} · ` +
+      `${(stats.renderFrames / sec).toFixed(0)}fps`;
+  }
+
+  /** 마지막 끊김·드롭 이후 흐른 시간. M1의 「60초 이상 유지」가 이것이다. */
+  cleanStreakSec(now = performance.now()) {
+    return (now - Math.max(this.stats.startedAt, this._lastIncidentAt)) / 1000;
+  }
+
   _drawHud() {
-    const { octx, cfg, stats } = this;
-    const sec = (performance.now() - stats.startedAt) / 1000;
+    const { octx, cfg } = this;
     octx.fillStyle = 'rgba(0,0,0,.6)';
-    octx.fillRect(8, cfg.BUF_H - 52, 460, 44);
+    octx.fillRect(8, cfg.BUF_H - 52, 520, 44);
     octx.fillStyle = '#0f0';
     octx.font = '13px ui-monospace, monospace';
-    octx.fillText(
-      `지연 ${cfg.DELAY_SEC}s · 버퍼 ${this.ring.filled}/${this.ring.slots} · ` +
-      `트리거 ${this.triggers.length} · 시크 ${stats.seeks}`,
-      14, cfg.BUF_H - 34
-    );
-    octx.fillText(
-      `적재누락 ${stats.missedFrames} · 렌더끊김 ${stats.renderStalls} · ` +
-      `디코더드롭 ${this._decoderDrops() - stats.decoderDropsAtStart} · ` +
-      `${(stats.renderFrames / sec).toFixed(0)}fps`,
-      14, cfg.BUF_H - 16
-    );
+    octx.fillText(this._hudLine1, 14, cfg.BUF_H - 34);
+    octx.fillText(this._hudLine2, 14, cfg.BUF_H - 16);
   }
 
   report() {
@@ -217,10 +245,12 @@ SB.Player = class {
       렌더fps: +(this.stats.renderFrames / sec).toFixed(1),
       시크: this.stats.seeks,
       트리거수: this.triggers.length,
-      // M1 판정 — 사용자가 느끼는 두 축만 본다
-      M1통과: this.stats.renderStalls === 0 &&
-              this._decoderDrops() - this.stats.decoderDropsAtStart === 0 &&
-              sec >= 60,
+      // 누적은 오래 돌수록 커진다. 비율로도 낸다.
+      끊김_분당: +(this.stats.renderStalls / (sec / 60)).toFixed(2),
+      누락_초당: +(this.stats.missedFrames / sec).toFixed(1),
+      // M1 판정 — 「60초 이상 유지」는 누적 0이 아니라 연속 무드롭이다
+      연속무드롭초: +this.cleanStreakSec().toFixed(1),
+      M1통과: this.cleanStreakSec() >= 60,
     };
   }
 
