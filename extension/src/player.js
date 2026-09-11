@@ -25,6 +25,7 @@ SB.Player = class {
       renderFrames: 0,
       decoderDropsAtStart: 0,
       seeks: 0,
+      resyncs: 0,
       startedAt: 0,
     };
     this._lastPresented = -1;
@@ -75,6 +76,7 @@ SB.Player = class {
     video.style.opacity = '0';
 
     this._setupAudio();
+    this._bindResync();
 
     this.stats.decoderDropsAtStart = this._decoderDrops();
     this.stats.startedAt = performance.now();
@@ -99,7 +101,7 @@ SB.Player = class {
       SB._audio = {
         ac,
         src,
-        delay: ac.createDelay(10),
+        delay: ac.createDelay(30),   // 0.25배속이면 DELAY_SEC/0.25 = 12초가 필요하다
         gain: ac.createGain(),
         analyser: Object.assign(ac.createAnalyser(), { fftSize: 1024 }),
       };
@@ -115,10 +117,62 @@ SB.Player = class {
     src.connect(delay);
     delay.connect(gain);
     gain.connect(ac.destination);   // 사용자에게는 지연된 소리만
-    delay.delayTime.value = this.cfg.DELAY_SEC;
     gain.gain.value = 1;
     ac.resume();
     this.audio = SB._audio;
+  }
+
+  /**
+   * 오디오 재동기화.
+   *
+   * 화면은 mediaTime 기준으로 DELAY_SEC 뒤를 보여주는데 DelayNode는 **벽시계**로
+   * 지연한다. 정상 재생에서는 둘이 같지만 일시정지·배속·탭 숨김에서 어긋난다.
+   * 셋 다 같은 뿌리라 한 곳에서 받는다.
+   */
+  _bindResync() {
+    const v = this.video;
+
+    // ① 일시정지 — 지연선에는 「화면이 앞으로 보여줄 3초」의 소리가 들어 있다.
+    //    그대로 두면 멈춘 뒤에도 3초가 흘러나오고, 버리면 재개 후 3초가 무음이 된다.
+    //    AudioContext를 통째로 멈추면 지연선 내용이 보존된다.
+    this._onPause = () => { this.audio?.ac.suspend?.(); };
+    this._onPlay = () => { this.audio?.ac.resume?.(); };
+
+    // ② 배속 — 미디어 3초는 벽시계로 3/rate 초다.
+    this._onRate = () => this._applyDelayForRate();
+
+    // ③ 탭 숨김 — rAF·rVFC가 멈춰 링버퍼만 비는데 영상은 계속 간다.
+    //    돌아오면 버퍼에 낡은 프레임만 남아 있어 과거 화면을 띄운다. 시크와 같게 다룬다.
+    this._onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      this.ring.clear();
+      this._lastCap = -1;
+      this.stats.resyncs++;
+    };
+
+    v.addEventListener('pause', this._onPause);
+    v.addEventListener('play', this._onPlay);
+    v.addEventListener('ratechange', this._onRate);
+    document.addEventListener('visibilitychange', this._onVisible);
+    this._applyDelayForRate();
+  }
+
+  _applyDelayForRate() {
+    const a = this.audio;
+    if (!a) return;
+    const rate = this.video.playbackRate || 1;
+    const want = Math.min(this.cfg.DELAY_SEC / rate, a.delay.maxDelayTime - 0.1);
+    // 급격히 바꾸면 클릭 잡음이 난다. 짧게 램프한다.
+    a.delay.delayTime.linearRampToValueAtTime(want, a.ac.currentTime + 0.05);
+    this._rateNow = rate;
+  }
+
+  _unbindResync() {
+    const v = this.video;
+    v.removeEventListener('pause', this._onPause);
+    v.removeEventListener('play', this._onPlay);
+    v.removeEventListener('ratechange', this._onRate);
+    document.removeEventListener('visibilitychange', this._onVisible);
   }
 
   _decoderDrops() {
@@ -209,7 +263,8 @@ SB.Player = class {
     const sec = (now - stats.startedAt) / 1000;
     this._hudLine1 =
       `지연 ${cfg.DELAY_SEC}s · 버퍼 ${this.ring.filled}/${this.ring.slots} · ` +
-      `트리거 ${this.triggers.length} · 시크 ${stats.seeks}`;
+      `트리거 ${this.triggers.length} · 시크 ${stats.seeks} · 재동기 ${stats.resyncs}` +
+      (this._rateNow !== 1 ? ` · ${this._rateNow}x` : '');
     this._hudLine2 =
       `무드롭 ${this.cleanStreakSec(now).toFixed(0)}s · 끊김 ${stats.renderStalls} · ` +
       `드롭 ${drops} · 누락 ${stats.missedFrames} · ` +
@@ -244,6 +299,8 @@ SB.Player = class {
       디코더드롭: this._decoderDrops() - this.stats.decoderDropsAtStart,
       렌더fps: +(this.stats.renderFrames / sec).toFixed(1),
       시크: this.stats.seeks,
+      재동기화: this.stats.resyncs,
+      배속: this._rateNow ?? 1,
       트리거수: this.triggers.length,
       // 누적은 오래 돌수록 커진다. 비율로도 낸다.
       끊김_분당: +(this.stats.renderStalls / (sec / 60)).toFixed(2),
@@ -256,6 +313,8 @@ SB.Player = class {
 
   stop() {
     this.running = false;
+    this._unbindResync();
+    this.audio?.ac.resume?.();   // 일시정지 상태로 두고 끄면 소리가 안 돌아온다
     this.out?.remove();
     this.video.style.opacity = this._prevOpacity ?? '';
     const a = SB._audio;
