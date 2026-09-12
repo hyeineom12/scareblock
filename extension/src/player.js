@@ -232,13 +232,27 @@ SB.Player = class {
       // 정지 상태에서는 currentTime이 안 흘러 램프가 진행되지 않는다. 바로 넣는다.
       param.cancelScheduledValues(now);
       param.value = want;
-    } else {
-      // 급격히 바꾸면 클릭 잡음이 난다. 짧게 램프하되 시작점을 못박아야 한다 —
-      // 앞선 이벤트가 없으면 램프의 기준값이 정의되지 않는다.
-      param.cancelScheduledValues(now);
-      param.setValueAtTime(param.value, now);
-      param.linearRampToValueAtTime(want, now + 0.05);
+      this._rateNow = rate;
+      return;
     }
+    if (Math.abs(param.value - want) < 0.01) { this._rateNow = rate; return; }
+
+    // 지연선 **길이**를 바꾸면 읽기 지점이 건너뛴다. 램프로 늘리면 그 구간을
+    // 되감느라 소리가 늘어지고(2배속 → 1배속에서 실측), 줄이면 건너뛴다.
+    // 램프로는 숨길 수 없으므로 짧게 음소거하고 무음 구간에서 점프시킨다.
+    const MUTE = 0.04;
+    const g = a.gain.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    g.linearRampToValueAtTime(0, now + MUTE);
+
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    param.setValueAtTime(want, now + MUTE);      // 안 들리는 동안 갈아끼운다
+
+    g.setValueAtTime(0, now + MUTE);
+    g.linearRampToValueAtTime(this._gainNow ?? 1, now + MUTE * 2);
+
     this._rateNow = rate;
   }
 
