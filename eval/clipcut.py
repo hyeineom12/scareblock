@@ -29,6 +29,7 @@ from pathlib import Path
 CLIP_S = 300.0      # §4 — 클립 길이 5분 이내
 MARGIN_S = 60.0     # 앞뒤로 비우는 구간 — 인트로 타이틀·엔딩 크레딧을 피한다
 WAV_SR = 16000      # 라벨링·탐지기 공용. features.py가 모노를 기대한다
+MEDIA_EXT = {".mp4", ".mkv", ".webm", ".mov"}   # 병합 산출물로 받아들일 확장자
 MAX_H = 720         # M1 기준이 720p다. 라벨링에 그 이상은 쓸모가 없고 내려받기만 느려진다
 
 # ELAN이 macOS에서 여는 조합으로 고정한다 — h264 + aac.
@@ -37,7 +38,13 @@ FMT = (f"bv*[vcodec^=avc1][height<={MAX_H}]+ba[ext=m4a]"
        f"/b[vcodec^=avc1][height<={MAX_H}]"
        f"/bv*[height<={MAX_H}]+ba/b[height<={MAX_H}]/bv*+ba/b")
 MANIFEST = "clips.csv"
-FIELDS = ["clip_id", "video_id", "clip_offset", "duration_s", "source_class", "url"]
+
+# 오프셋이 **무작위였다**는 것을 이 파일 하나로 말할 수 있어야 한다.
+# 타임스탬프만 있으면 "그 값이었다"까지고, 사람이 골랐는지 무작위였는지는
+# 구별되지 않는다 — §4 규칙의 존재 이유가 바로 그 구분이다 (#24 리뷰 🔴2).
+# seed·clip_s·margin_s·video_duration_s 넷이 있으면 draw_offsets를 그대로 재실행할 수 있다.
+FIELDS = ["clip_id", "video_id", "clip_offset", "duration_s", "source_class", "url",
+          "seed", "clip_s", "margin_s", "video_duration_s"]
 
 
 @dataclass
@@ -122,10 +129,16 @@ def cut(url: str, offset: float, clip_s: float, stem: Path, exact: bool = False)
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"절단 실패 — {url} @{offset}\n{r.stderr.strip()[:300]}")
-    got = sorted(stem.parent.glob(f"{stem.name}.*"))
+    # yt-dlp가 병합에 실패하거나 끊기면 c001.f137.mp4 같은 **포맷별 조각**이 남는다.
+    # 알파벳 순으로는 f137이 mp4보다 앞이라 조각이 먼저 잡히고, 그러면 조용히
+    # 틀린 파일로 wav를 뽑는다 (#24 리뷰 🟡4). 확장자를 아는 것으로 한정하고
+    # 그 중 가장 최근 것을 집는다.
+    got = [q for q in stem.parent.glob(f"{stem.name}.*")
+           if q.suffix.lower() in MEDIA_EXT and "." not in q.name[len(stem.name) + 1:]]
     if not got:
-        raise RuntimeError(f"절단은 됐다는데 파일이 없다 — {stem}")
-    return got[0]
+        raise RuntimeError(f"절단은 됐다는데 쓸 수 있는 파일이 없다 — {stem}.* "
+                           f"(남은 것: {sorted(q.name for q in stem.parent.glob(f'{stem.name}.*'))})")
+    return max(got, key=lambda q: q.stat().st_mtime)
 
 
 def to_wav(src: Path, dest: Path, sr: int = WAV_SR) -> None:
@@ -216,7 +229,9 @@ def main() -> int:
                     failed.append(f"{vid}@{off}")
                     continue
             rows.append({"clip_id": clip_id, "video_id": vid, "clip_offset": off,
-                         "duration_s": got, "source_class": c.source_class, "url": c.url})
+                         "duration_s": got, "source_class": c.source_class, "url": c.url,
+                         "seed": a.seed, "clip_s": a.clip_s, "margin_s": a.margin_s,
+                         "video_duration_s": round(dur, 2)})
 
     if not rows:
         print("만들어진 클립이 없다", file=sys.stderr)

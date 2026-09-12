@@ -45,6 +45,26 @@ aqz-KE-bpKQ,c007,742.0,46.33,47.10,jumpscare,false,B,문 쾅 + 화면 컷
 매칭하면 클립 A의 탐지가 클립 B의 라벨에 붙어 TP가 부푼다(#19 리뷰 🔴2).
 `Detection.clip_id`를 매칭 조건에 넣어 막는다.
 
+**클립 명세** — `clips.csv`. `eval/clipcut.py`가 낸다.
+
+```csv
+clip_id,video_id,clip_offset,duration_s,source_class,url,seed,clip_s,margin_s,video_duration_s
+c001,f7jkZXvaB4g,4347.76,300.11,scare,f7jkZXvaB4g,20260912,300.0,60.0,5743.0
+```
+
+**이 파일이 「무엇을 봤나」의 유일한 근거다.** 라벨은 「무엇이 있었나」만 말하므로,
+`labeling-guide §4`의 **대조 클립(라벨 0건)** 은 라벨 파일에 아무 흔적도 남기지 않는다.
+따라서 클립 목록을 라벨에서 역산하면(`by_clip(truth)`) 대조 클립이 분모에서 사라지고,
+대조 비율을 30%로 맞춰도 `control_ratio`가 0%로 나와 **경고가 거꾸로 뜬다.**
+오탐을 세야 할 클립이 분석에서 통째로 빠지는 것도 같은 뿌리다(#19 재리뷰 🔴1).
+
+`seed`·`clip_s`·`margin_s`·`video_duration_s`는 **오프셋이 무작위였다는 것을 증명하는 값**이다.
+이 넷이 있으면 `draw_offsets`를 그대로 재실행해 같은 오프셋을 다시 뽑을 수 있다 —
+심사에서 "클립을 어떻게 골랐나"에 답해야 하는 자리다(#24 리뷰 🔴2).
+
+> **아직 `e1.py`가 이 파일을 읽지 않는다.** `--clips`를 받아 분모를 이 파일 기준으로
+> 바꾸는 일이 남아 있다.
+
 **오디오** — `<clip_id>.wav` 파일들이 든 디렉터리. mp4에서 뽑으려면:
 
 ```bash
