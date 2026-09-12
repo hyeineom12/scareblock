@@ -53,39 +53,43 @@ class ConvertError(Exception):
 
 
 # ── 시간 파싱 ────────────────────────────────────────────────────────────
-def _parse_time(cell: str) -> float | None:
-    """초 단위 float로 돌려준다. 시간처럼 안 생겼으면 None.
+# 시간 칸의 종류. **ELAN은 켜놓은 형식을 모두 열로 낸다** — 실제 내보내기에서
+# 시작 시각 하나가 `00:01:03.340` · `63.34` · `63340` · `00:01:03:08` 네 열로 나왔다.
+# 그래서 "시간처럼 생긴 칸"을 순서대로 집으면 시작과 끝이 같은 값이 된다.
+# 종류별로 모아서 **한 종류만 골라** 쓴다.
+PREFER = ("sec", "hms", "int")   # 소수 초 > hh:mm:ss.mmm > 정수(밀리초일 수 있음)
 
-    ELAN이 내는 형태는 버전·옵션에 따라 다르다. `ss.mmm`(§5에서 고정한 것),
-    `hh:mm:ss.mmm`, 정수 밀리초 셋을 받는다. SMPTE(`hh:mm:ss:ff`)는 프레임률을
-    알아야 초로 바꿀 수 있어 받지 않고 다시 내보내라고 한다.
-    """
+
+def _classify(cell: str) -> tuple[str, float] | None:
+    """(종류, 초) 또는 None. SMPTE는 값을 못 믿으므로 종류만 표시한다."""
     c = cell.strip()
     if not c:
         return None
-    if c.count(":") == 3:                      # SMPTE — 프레임률 없이는 못 바꾼다
-        raise ConvertError(
-            f"시간이 SMPTE 형식이다 ('{c}'). ELAN에서 초 단위(ss.mmm)로 다시 내보내라 "
-            f"(elan-setup.md §5)")
-    if ":" in c:                               # hh:mm:ss.mmm 또는 mm:ss.mmm
-        parts = c.split(":")
+    colons = c.count(":")
+    if colons >= 3:                            # SMPTE hh:mm:ss:ff — 프레임률이 필요하다
+        return ("smpte", 0.0)
+    if colons:                                 # hh:mm:ss.mmm 또는 mm:ss.mmm
         try:
-            nums = [float(p) for p in parts]
+            nums = [float(x) for x in c.split(":")]
         except ValueError:
             return None
         total = 0.0
         for n in nums:
             total = total * 60 + n
-        return total
-    try:
-        return float(c)
-    except ValueError:
-        return None
+        return ("hms", total)
+    if "." in c:
+        try:
+            return ("sec", float(c))
+        except ValueError:
+            return None
+    if c.lstrip("-").isdigit():
+        return ("int", float(c))
+    return None
 
 
-def _looks_integer(cell: str) -> bool:
-    c = cell.strip()
-    return bool(c) and ":" not in c and "." not in c and c.lstrip("-").isdigit()
+def _looks_like_path(cell: str) -> bool:
+    c = cell.strip().lower()
+    return c.endswith((".eaf", ".mp4", ".wav", ".mov", ".mkv")) or "/" in c
 
 
 # ── 라벨 텍스트 → ambiguous · note ──────────────────────────────────────
@@ -161,28 +165,41 @@ def parse_export(path: Path, clip_id: str) -> tuple[list[Row], list[str]]:
                 notes.append(f"{path.name}:{ln} 트랙 이름이 없어 건너뛴다 — {known[:2]}")
             continue
 
-        times: list[tuple[int, float]] = []
+        by_kind: dict[str, list[tuple[int, float]]] = {}
+        last_time_at = tier_at
         for i in range(tier_at + 1, len(cells)):
-            v = _parse_time(cells[i])
-            if v is not None:
-                times.append((i, v))
-                if not _looks_integer(cells[i]):
-                    ints_only = False
-        if len(times) < 2:
+            got = _classify(cells[i])
+            if got is None:
+                continue
+            kind, val = got
+            by_kind.setdefault(kind, []).append((i, val))
+            last_time_at = i
+
+        use = next((k for k in PREFER if len(by_kind.get(k, [])) >= 2), None)
+        if use is None:
+            if "smpte" in by_kind:
+                raise ConvertError(
+                    f"{path.name}:{ln} 시간이 SMPTE 형식뿐이다 ('{cells[by_kind['smpte'][0][0]]}'). "
+                    f"프레임률을 알아야 초로 바꿀 수 있다 — 내보내기에서 초 단위(ss.msec)나 "
+                    f"hh:mm:ss.ms를 함께 켜서 다시 내보내라 (elan-setup.md §5)")
             raise ConvertError(f"{path.name}:{ln} 시작·끝 시각을 찾지 못했다 — {cells}")
+        if use == "int":
+            ints_only = True
+        else:
+            ints_only = False
 
-        (i_on, onset), (i_off, offset) = times[0], times[1]
-        eaten = {i_on, i_off}
-        # `duration` 열이 켜져 있으면 세 번째 시간이 끝−시작과 같다. 무시한다(§1).
-        # **끝−시작과 같은지 확인하고서 버린다** — 확인 없이 버리면 숫자로 적은
-        # 라벨 텍스트가 같이 사라진다.
-        if len(times) > 2 and abs(times[2][1] - (offset - onset)) < 1e-3:
-            eaten.add(times[2][0])
+        picked = by_kind[use]
+        onset, offset = picked[0][1], picked[1][1]
+        # `duration` 열이 켜져 있으면 세 번째 값이 끝−시작과 같다. 무시한다(§1).
+        if len(picked) > 2 and abs(picked[2][1] - (offset - onset)) < 1e-3:
             notes.append(f"{path.name}:{ln} duration 열이 있다 — 무시한다 (§1)")
+        if len(by_kind) > 1:
+            notes.append(f"{path.name}:{ln} 시간 형식 {sorted(by_kind)} 중 "
+                         f"'{use}'를 쓴다")
 
-        # 라벨 텍스트 = 시간 칸들 뒤에 남은 첫 칸. 없으면 빈 칸이다.
+        # 라벨 텍스트 = **모든 시간 칸 뒤**에 남은 첫 칸. 파일 이름 열은 건너뛴다.
         text = next((c for i, c in enumerate(cells)
-                     if i > i_off and i not in eaten and c.strip()), "")
+                     if i > last_time_at and c.strip() and not _looks_like_path(c)), "")
         parsed.append((tier, onset, offset, text))
 
     # 단위 — 정수만 나오고 값이 너무 크면 밀리초다
@@ -235,6 +252,18 @@ def clip_id_of(path: Path) -> str:
     return stem.strip()
 
 
+def resolve_clip_id(stem: str, known: list[str]) -> str | None:
+    """파일 이름을 명세의 clip_id에 맞춘다.
+
+    내보낼 때 이름에 접미사가 붙는다 — `c001_s.txt`·`c001 사본.txt`처럼.
+    명세에 있는 id 중 **이름의 접두사인 가장 긴 것**을 쓴다.
+    """
+    if stem in known:
+        return stem
+    cands = [k for k in known if stem.startswith(k)]
+    return max(cands, key=len) if cands else None
+
+
 def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
             annotator: str) -> tuple[list[dict], list[str]]:
     rows: list[dict] = []
@@ -245,15 +274,20 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
         notes += n
         vid, off = ("", 0.0)
         if manifest is not None:
-            if cid not in manifest:
+            hit = resolve_clip_id(cid, sorted(manifest))
+            if hit is None:
                 raise ConvertError(
-                    f"{p.name}: clip_id '{cid}'가 클립 명세에 없다. 파일 이름이 "
-                    f"clip_id와 같아야 한다 (있는 것: {sorted(manifest)[:5]}…)")
+                    f"{p.name}: clip_id '{cid}'를 클립 명세에서 찾지 못했다. 파일 이름이 "
+                    f"clip_id로 시작해야 한다 (있는 것: {sorted(manifest)[:5]}…)")
+            if hit != cid:
+                notes.append(f"{p.name}: 이름에서 clip_id '{hit}'를 읽었다")
+                cid = hit
             vid, off = manifest[cid]
         if not got:
             notes.append(f"{p.name}: 사건 0건 — 대조 클립이면 정상이다")
         for r in got:
-            rows.append({"video_id": vid, "clip_id": r.clip_id, "clip_offset": off,
+            # 명세에서 푼 cid를 쓴다 — parse_export는 파일 이름 그대로 받았다
+            rows.append({"video_id": vid, "clip_id": cid, "clip_offset": off,
                          "onset": r.onset, "offset": r.offset, "category": r.category,
                          "ambiguous": str(r.ambiguous).lower(), "annotator": annotator,
                          "note": r.note})
