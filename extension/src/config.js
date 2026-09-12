@@ -3,7 +3,7 @@ window.SB = window.SB || {};
 
 SB.config = {
   DELAY_SEC: 3.0,        // 지연 버퍼 길이
-  CAPTURE_FPS: 40,       // 60fps 원본에서 rVFC가 42fps로만 배달돼 40이 실질 상한이다
+  CAPTURE_FPS: 40,       // 60fps도 가능하나 메모리(190슬롯 668 MB) 때문에 40으로 둔다
   BUF_W: 1280,
   BUF_H: 720,
   BLUR_PX: 28,
