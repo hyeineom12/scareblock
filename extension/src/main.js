@@ -15,7 +15,17 @@ window.SB = window.SB || {};
     if (!video || video.readyState < 2) return;
 
     player = new SB.Player(video);
-    player.start();
+    try {
+      player.start();
+    } catch (e) {
+      // start()는 캔버스를 붙이고 <video>를 숨긴 뒤 오디오를 잡는다. 중간에 터지면
+      // 그 상태로 멈춰 화면이 까맣게 남는다. 원복해서 최소한 영상은 보이게 한다.
+      console.error('[scareblock] 시작 실패 — 원복한다', e);
+      try { player.stop(); } catch { /* 부분 초기화 상태일 수 있다 */ }
+      player = null;
+      window.scareblock = { error: String(e), stats: () => ({ 시작실패: String(e) }) };
+      return;
+    }
     detector = new SB.FakeDetector(video, player);   // 02단계에서 교체된다
     detector.start();
 

@@ -142,8 +142,15 @@ SB.Player = class {
     // 달라졌으면 소스만 다시 만든다 — AudioContext는 페이지당 개수 상한이 있어 재사용한다.
     if (SB._audio.el !== this.video) {
       try { SB._audio.src?.disconnect(); } catch { /* 아직 안 걸림 */ }
-      SB._audio.src = SB._audio.ac.createMediaElementSource(this.video);
-      SB._audio.el = this.video;
+      try {
+        SB._audio.src = SB._audio.ac.createMediaElementSource(this.video);
+        SB._audio.el = this.video;
+      } catch (e) {
+        // 같은 엘리먼트에 두 번 물리면 InvalidStateError다. 페이지에서 다른
+        // 스크립트(이전 PoC 스니펫 등)가 이미 잡았을 때 난다.
+        throw new Error(`오디오 소스를 만들 수 없다 — ${e.name}: ${e.message}. ` +
+          `이 페이지에서 이미 다른 스크립트가 <video>에 물렸을 수 있다. 새로고침해 본다.`);
+      }
     }
     const { ac, src, delay, gain, analyser } = SB._audio;
     try {
@@ -379,7 +386,7 @@ SB.Player = class {
 
   stop() {
     this.running = false;
-    this._unbindResync();
+    try { this._unbindResync(); } catch { /* _bindResync 전에 터졌을 수 있다 */ }
     this.audio?.ac.resume?.();   // 일시정지 상태로 두고 끄면 소리가 안 돌아온다
     this.out?.remove();
     this.video.style.opacity = this._prevOpacity ?? '';
