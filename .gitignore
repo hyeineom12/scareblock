@@ -1,3 +1,13 @@
+# 개인 작업 파일 — 저장소에 올리지 않는다
+_local/
+
+# 평가 데이터 — 영상·오디오는 커밋하지 않는다
+# 재현 자료는 URL + 타임스탬프 + 라벨만 공개한다 (제안서 06단계)
+*.mp4
+*.webm
+*.wav
+*.m4a
+
 # 파이썬
 __pycache__/
 *.py[cod]
@@ -5,15 +15,14 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# 평가 데이터 — 영상·오디오는 커밋하지 않는다
-# 재현 자료는 URL + 타임스탬프 + 라벨만 공개한다 (제안서 06단계)
-_local/
-*.mp4
-*.wav
-*.webm
-*.m4a
-
-# OS·편집기
+# OS·에디터
 .DS_Store
+Thumbs.db
+*.swp
 .idea/
 .vscode/
+
+# 의존성·빌드 산출물
+node_modules/
+dist/
+build/
