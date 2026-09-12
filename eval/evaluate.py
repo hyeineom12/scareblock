@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from .detect import Detection
 from .labels import Label
 
-MATCH_TOL = 0.5  # labeling-guide §6 — onset이 ±0.5초 안이면 같은 사건
+MATCH_TOL = 0.5   # labeling-guide §6 — onset이 ±0.5초 안이면 같은 사건
+RENDER_S = 0.0    # 블러 렌더링 시간. M1 실측 뒤 이 상수만 올리면 표가 다시 나온다
 
 
 @dataclass
@@ -21,7 +22,9 @@ class Metrics:
     tp: int
     fp: int
     fn: int
-    in_time: int          # 매칭됐고 지연이 lookahead 안에 들어온 것
+    in_time: int          # 매칭됐고 **라벨 onset 기준** 지연이 lookahead 안인 것
+    render_s: float = 0.0   # 적시성에 더한 블러 렌더링 시간 (M1 전에는 0)
+    onset_capped: int = 0   # 되짚기 상한에 걸린 탐지 수 — onset 추정 실패 빈도
 
     @property
     def precision(self) -> float:
@@ -38,12 +41,24 @@ class Metrics:
 
     @property
     def timeliness(self) -> float:
-        """도달 전 개입 성공률. lookahead 0에서 무너져야 주장이 증명된다."""
+        """도달 전 개입 성공률.
+
+        분자는 **`라벨 onset → 확신` + 렌더링 시간 ≤ lookahead**인 참 사건 수다.
+        탐지기가 되짚어 만든 onset을 쓰면 자기 자신과 비교하게 되고, 지연이
+        되짚기가 멈춘 거리로 바뀐다 (#19 리뷰 🔴1).
+        """
         return self.in_time / self.n_true if self.n_true else 0.0
 
 
+def _same_clip(t: Label, d: Detection) -> bool:
+    """클립을 섞지 않는다. 모든 클립의 시간축이 0에서 시작하므로 합쳐서 매칭하면
+    클립 A의 탐지가 클립 B의 라벨과 붙는다 (#19 리뷰 🔴2).
+    `clip_id`가 비어 있으면(단일 클립 호출) 검사하지 않는다."""
+    return not d.clip_id or d.clip_id == t.clip_id
+
+
 def match(truth: list[Label], dets: list[Detection], tol: float = MATCH_TOL):
-    """onset 근접도로 1:1 매칭한다. 가까운 쌍부터 탐욕적으로 묶는다."""
+    """onset 근접도로 1:1 매칭한다. 같은 클립 안에서, 가까운 쌍부터 탐욕적으로."""
     pairs: list[tuple[Label, Detection]] = []
     used_t, used_d = set(), set()
     cand = sorted(
@@ -51,7 +66,7 @@ def match(truth: list[Label], dets: list[Detection], tol: float = MATCH_TOL):
             (abs(t.onset - d.onset), ti, di)
             for ti, t in enumerate(truth)
             for di, d in enumerate(dets)
-            if abs(t.onset - d.onset) <= tol
+            if _same_clip(t, d) and abs(t.onset - d.onset) <= tol
         )
     )
     for _, ti, di in cand:
@@ -64,9 +79,10 @@ def match(truth: list[Label], dets: list[Detection], tol: float = MATCH_TOL):
 
 
 def score(truth: list[Label], dets: list[Detection], lookahead: float,
-          tol: float = MATCH_TOL) -> Metrics:
+          tol: float = MATCH_TOL, render_s: float = RENDER_S) -> Metrics:
     pairs, used_t, used_d = match(truth, dets, tol)
-    in_time = sum(1 for _, d in pairs if d.latency <= lookahead)
+    # 사용자가 노출되는 시점은 **라벨 onset**이다. 탐지기의 추정치가 아니다.
+    in_time = sum(1 for t, d in pairs if (d.fire - t.onset) + render_s <= lookahead)
     return Metrics(
         lookahead=lookahead,
         n_true=len(truth),
@@ -75,4 +91,6 @@ def score(truth: list[Label], dets: list[Detection], lookahead: float,
         fp=len(dets) - len(used_d),
         fn=len(truth) - len(used_t),
         in_time=in_time,
+        render_s=render_s,
+        onset_capped=sum(1 for d in dets if d.onset_capped),
     )

@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
-
 from .features import Features
 
 
@@ -20,34 +18,46 @@ class Params:
     drms_min: float = 0.0         # dRMS/dt 하한 — 0이면 기울기 조건을 끈다
     cooldown_s: float = 2.0
     silence_floor: float = 1e-4   # 무음 구간 판정 건너뛰기
+    backtrack_max_s: float = 1.0  # 되짚기 상한 — 없으면 t=0까지 내려간다
 
 
 @dataclass
 class Detection:
-    onset: float      # 자극이 올라가기 시작한 추정 시각
-    fire: float       # 규칙이 확신에 이른 시각
+    onset: float           # 자극이 올라가기 시작한 추정 시각
+    fire: float            # 규칙이 확신에 이른 시각 (분석 창의 끝)
     score: float
+    clip_id: str = ""      # 클립 간 교차 매칭을 막는다 (#19 리뷰 🔴2)
+    onset_capped: bool = False   # 되짚기가 상한에 걸렸다 = onset 추정 실패
 
     @property
-    def latency(self) -> float:
-        """onset부터 확신까지 걸린 시간. E1의 L과 비교되는 값이다."""
+    def backtrack_s(self) -> float:
+        """되짚은 거리. **적시성 지표가 아니다** — 적시성은 라벨 onset을 쓴다.
+
+        #19 리뷰 🔴1: 이 값을 적시성에 쓰면 탐지기를 자기 자신과 비교하게 된다.
+        진단용(되짚기가 어디서 멈추는지)으로만 본다.
+        """
         return self.fire - self.onset
 
 
-def _backtrack_onset(f: Features, i: int) -> float:
+def _backtrack_onset(f: Features, i: int, max_s: float) -> tuple[float, bool]:
     """RMS가 정적 수준을 벗어나기 시작한 프레임까지 되짚는다.
 
-    발화 시점이 아니라 시작점을 onset으로 삼아야 적시성이 의미를 갖는다
+    발화 시점이 아니라 시작점을 추정해야 "어디서 올라가기 시작했는가"를 볼 수 있다
     (labeling-guide §3 — onset은 정점이 아니라 시작점).
+
+    **상한을 둔다.** 바닥이 조용해지지 않는 구간(계속 시끄러운 장면, 음악 위의
+    비명)에서는 `j = 0`까지 내려가 추정이 무의미해진다 (#19 리뷰 🟡3).
+    상한에 걸렸으면 그 사실을 함께 돌려주어 리포트에서 빈도를 센다.
     """
     floor = max(f.quiet[i] * 1.5, f.peak[i] * 0.02)
+    limit = max(0, i - max(1, int(round(max_s / f.hop))))
     j = i
-    while j > 0 and f.rms[j] > floor:
+    while j > limit and f.rms[j] > floor:
         j -= 1
-    return f.t(j)
+    return f.t(j), j == limit and f.rms[j] > floor
 
 
-def run(f: Features, p: Params | None = None) -> list[Detection]:
+def run(f: Features, p: Params | None = None, clip_id: str = "") -> list[Detection]:
     p = p or Params()
     out: list[Detection] = []
     cooldown_frames = int(round(p.cooldown_s / f.hop))
@@ -64,8 +74,9 @@ def run(f: Features, p: Params | None = None) -> list[Detection]:
         if p.drms_min > 0 and f.drms[i] < p.drms_min:
             continue
 
-        onset = _backtrack_onset(f, i)
-        out.append(Detection(onset=onset, fire=f.t(i), score=float(cur / (peak + 1e-9))))
+        onset, capped = _backtrack_onset(f, i, p.backtrack_max_s)
+        out.append(Detection(onset=onset, fire=f.t_ready(i), score=float(cur / (peak + 1e-9)),
+                             clip_id=clip_id, onset_capped=capped))
         blocked_until = i + cooldown_frames
 
     return out
