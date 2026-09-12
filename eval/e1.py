@@ -46,9 +46,19 @@ def analyse(clip_audio: dict[str, Path], truth: list[L.Label], params: Params,
     return rows, detections_per_minute(all_det, total_s), total_s
 
 
-def render(rows, per_min: float, total_s: float) -> str:
-    head = (f"평가 구간 {total_s / 60:.1f}분 · 참 사건 {rows[0].n_true}건 · "
-            f"탐지 {rows[0].n_pred}건 ({per_min:.1f}건/분)")
+def render(rows, per_min: float, total_s: float,
+           n_used: int | None = None, n_expected: int | None = None) -> str:
+    head = ""
+    # 클립 수를 **표 안에** 넣는다. wav 하나가 없어도 경고는 stderr로 가고 표는
+    # 그대로 나오므로, 25개 결과를 26개라고 믿고 논문에 옮기게 된다 (#26 리뷰 🟡2).
+    # 표를 옮길 때 같이 따라가는 자리에 있어야 한다.
+    if n_expected is not None:
+        head = f"클립 {n_used}/{n_expected}개"
+        if n_used != n_expected:
+            head += " ⚠️ 명세보다 적다"
+        head += " · "
+    head += (f"평가 구간 {total_s / 60:.1f}분 · 참 사건 {rows[0].n_true}건 · "
+             f"탐지 {rows[0].n_pred}건 ({per_min:.1f}건/분)")
     if rows[0].onset_capped:
         head += f" · onset 되짚기 상한 {rows[0].onset_capped}건"
     if rows[0].render_s:
@@ -114,7 +124,8 @@ def _selftest() -> int:
             ]
 
         rows, per_min, total = analyse(clip_audio, truth, Params())
-        print(render(rows, per_min, total))
+        print(render(rows, per_min, total,
+                     n_used=len(clip_audio), n_expected=len(specs)))
 
         # 🔴1 회귀 — 분모를 라벨에서 역산하면 대조 클립이 사라진다.
         from_labels = L.by_clip(truth)                       # 옛 동작
@@ -161,8 +172,16 @@ def _selftest() -> int:
         print(f"주석자 필터: 단독 {r_one.n_true}건 recall {r_one.recall:.3f} · "
               f"이중 {r_both.n_true}건 recall {r_both.recall:.3f}")
 
+        # 🟡2 회귀 — wav가 하나 없으면 표 머리줄에 드러나야 한다
+        short = render(rows, per_min, total, n_used=len(specs) - 1, n_expected=len(specs))
+        head_ok = "명세보다 적다" in short.splitlines()[0] and \
+            "명세보다 적다" not in render(rows, per_min, total,
+                                     n_used=len(specs), n_expected=len(specs))
+        print(f"클립 수 표기: {short.splitlines()[0].split(' · ')[0]}")
+
         ok = (
-            rows[-1].recall >= 2 / 3
+            head_ok
+            and rows[-1].recall >= 2 / 3
             and rows[0].timeliness < rows[-1].timeliness
             and no_cross
             and control_ok
@@ -205,6 +224,7 @@ def main() -> int:
         print(f"알림: 주석자 {who}가 섞여 있어 '{pick}'만 쓴다 — "
               f"바꾸려면 --annotator. 두 사람을 함께 읽는 것은 κ 계산뿐이다",
               file=sys.stderr)
+    coverage = {w: len({x.clip_id for x in truth if x.annotator == w}) for w in who}
     if pick is not None:
         truth = L.pick_annotator(truth, pick)
         if not truth:
@@ -221,6 +241,17 @@ def main() -> int:
         clip_ids = sorted(audio)
         print("알림: --clips가 없어 wav 디렉터리 전체를 분모로 쓴다", file=sys.stderr)
 
+    # 고른 주석자가 분모의 일부만 라벨링했으면 **나머지가 전부 대조 클립으로 세진다**.
+    # §6의 이중 라벨링은 10~15%만 겹치므로 --annotator A로 돌리면 비율이 80%대로
+    # 뛰고 30% 검사를 가뿐히 넘는다 — 평가가 가장 망가진 상태에서 경고가 조용해진다
+    # (#26 리뷰 🟡1). 막지는 않는다. A 라벨만 따로 볼 일이 있다.
+    if pick is not None and coverage and coverage.get(pick, 0) < max(coverage.values()):
+        mine, best = coverage.get(pick, 0), max(coverage.values())
+        print(f"경고: 주석자 '{pick}'는 클립 {mine}개만 라벨링했다 "
+              f"(가장 많이 단 사람은 {best}개). 나머지가 대조 클립으로 세지므로 "
+              f"**평가에 쓸 값이 아니다** — κ 계산용이면 --annotator를 빼라",
+              file=sys.stderr)
+
     clips = L.by_clip(truth, clip_ids)
     ratio = L.control_ratio(clips)
     if ratio < 0.30:
@@ -235,11 +266,11 @@ def main() -> int:
     if extra:
         print(f"경고: 명세에 없는 wav {sorted(extra)} — 평가에서 뺀다", file=sys.stderr)
 
+    used = {k: v for k, v in audio.items() if k in set(clip_ids)}
     rows, per_min, total = analyse(
-        {k: v for k, v in audio.items() if k in set(clip_ids)}, truth,
-        Params(drms_min=a.drms_min), render_s=a.render_s,
+        used, truth, Params(drms_min=a.drms_min), render_s=a.render_s,
     )
-    print(render(rows, per_min, total))
+    print(render(rows, per_min, total, n_used=len(used), n_expected=len(clip_ids)))
     return 0
 
 
