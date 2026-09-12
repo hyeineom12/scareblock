@@ -265,9 +265,16 @@ def resolve_clip_id(stem: str, known: list[str]) -> str | None:
 
 
 def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
-            annotator: str) -> tuple[list[dict], list[str]]:
+            annotator: str) -> tuple[list[dict], list[str], list[str]]:
+    """(라벨 행, 알림, **검토한 clip_id 목록**).
+
+    세 번째가 중요하다. **사건 0건인 대조 클립은 라벨 행을 남기지 않으므로**,
+    라벨 CSV만으로는 「검토했고 아무것도 없었다」와 「아직 안 했다」를 구별할 수
+    없다. 평가 분모는 이 목록이어야 한다 (#19 재리뷰 🔴1).
+    """
     rows: list[dict] = []
     notes: list[str] = []
+    seen: list[str] = []
     for p in sorted(paths):
         cid = clip_id_of(p)
         got, n = parse_export(p, cid)
@@ -283,6 +290,7 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
                 notes.append(f"{p.name}: 이름에서 clip_id '{hit}'를 읽었다")
                 cid = hit
             vid, off = manifest[cid]
+        seen.append(cid)
         if not got:
             notes.append(f"{p.name}: 사건 0건 — 대조 클립이면 정상이다")
         for r in got:
@@ -292,7 +300,25 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
                          "ambiguous": str(r.ambiguous).lower(), "annotator": annotator,
                          "note": r.note})
     rows.sort(key=lambda r: (r["clip_id"], r["onset"], r["category"]))
-    return rows, notes
+    return rows, notes, seen
+
+
+def write_clip_subset(src: Path, dest: Path, seen: list[str]) -> int:
+    """클립 명세에서 **검토한 클립만** 남긴 부분집합을 쓴다.
+
+    20개에서 멈추면 평가셋은 34개가 아니라 그 20개다. 대조 비율의 분모도
+    이쪽이다. 열은 원본 명세를 그대로 가져간다.
+    """
+    with open(src, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fields = reader.fieldnames or []
+        keep = [r for r in reader if (r.get("clip_id") or "").strip() in set(seen)]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        w.writerows(keep)
+    return len(keep)
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -329,7 +355,7 @@ def _selftest() -> int:
     man.write_text("clip_id,video_id,clip_offset\n"
                    "c001,aqz-KE-bpKQ,742.0\nc002,vid2,10.5\nc003,vid3,0\nc004,vid4,300\n")
 
-    rows, notes = convert(sorted(tmp.glob("c0*.txt")), load_manifest(man), "B")
+    rows, notes, seen = convert(sorted(tmp.glob("c0*.txt")), load_manifest(man), "B")
     out = tmp / "labels.csv"
     write_csv(out, rows)
 
@@ -355,6 +381,7 @@ def _selftest() -> int:
         "값이 기대와 같다": got == want,
         "duration 열이 없다": "duration" not in FIELDS,
         "대조 클립(c004)은 행이 0건": not any(r["clip_id"] == "c004" for r in rows),
+        "대조 클립도 검토 목록에는 들어간다": "c004" in seen and len(seen) == 4,
         "clip_offset이 명세에서 왔다":
             all(float(r["clip_offset"]) == 742.0 for r in rows if r["clip_id"] == "c001"),
         "파일 이름의 _export가 떨어졌다": any(r["clip_id"] == "c002" for r in rows),
@@ -383,6 +410,8 @@ def main() -> int:
     ap.add_argument("--clips", help="클립 명세 CSV — video_id·clip_offset을 여기서 가져온다")
     ap.add_argument("--annotator", help="라벨을 단 사람 (§1). 이중 라벨링 구분에 쓴다")
     ap.add_argument("--out", help="출력 CSV 경로 (없으면 화면에 낸다)")
+    ap.add_argument("--out-clips", help="검토한 클립만 담은 명세를 쓸 경로 — "
+                                       "E1의 --clips로 쓴다 (대조 비율의 분모)")
     ap.add_argument("--selftest", action="store_true", help="합성 내보내기로 변환 점검")
     a = ap.parse_args()
 
@@ -411,7 +440,7 @@ def main() -> int:
               "§1이 요구하는 열이고 원본과 대조할 유일한 단서다", file=sys.stderr)
 
     try:
-        rows, notes = convert(paths, manifest, a.annotator)
+        rows, notes, seen = convert(paths, manifest, a.annotator)
     except ConvertError as e:
         print(f"변환 실패 — {e}", file=sys.stderr)
         return 1
@@ -436,8 +465,14 @@ def main() -> int:
             print(f"  {p}", file=sys.stderr)
     n_clips = len({r["clip_id"] for r in rows})
     blanks = sum(1 for n in notes if "사건 0건" in n)
-    print(f"클립 {n_clips}개에서 사건 {len(rows)}건 · 사건 0건인 클립 {blanks}개",
-          file=sys.stderr)
+    print(f"검토한 클립 {len(seen)}개 · 사건 {len(rows)}건 · "
+          f"사건 있는 클립 {n_clips}개 · 사건 0건인 클립 {blanks}개", file=sys.stderr)
+    if a.out_clips:
+        if not a.clips:
+            print("--out-clips는 --clips가 있어야 쓸 수 있다", file=sys.stderr)
+            return 1
+        n = write_clip_subset(Path(a.clips), Path(a.out_clips), seen)
+        print(f"검토한 클립 명세 {n}개 → {a.out_clips}", file=sys.stderr)
     return 0
 
 
