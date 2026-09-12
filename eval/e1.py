@@ -90,10 +90,14 @@ def _selftest() -> int:
     sr, dur = 16000, 30.0
     # 클립이 둘이어야 클립 간 교차 매칭(#19 리뷰 🔴2)이 회귀로 잡힌다.
     # c002는 바닥이 시끄러워 되짚기 상한(🟡3)도 함께 지나간다.
+    # c003은 **대조 클립**이다 — 소리는 나지만 라벨이 0건이다. 라벨을 분모로 쓰면
+    # 이 클립이 통째로 빠져 오탐이 한 건도 안 세진다 (#19 리뷰 🔴1).
     specs = {
         "c001": dict(floor=0.004, onsets=[5.0, 12.0, 21.5], crescendos=[16.0], seed=0),
         "c002": dict(floor=0.020, onsets=[12.4, 24.0], crescendos=[], seed=1),
+        "c003": dict(floor=0.004, onsets=[6.0, 14.0, 23.0], crescendos=[], seed=2),
     }
+    CONTROL = {"c003"}
     tmpdir = Path(tempfile.mkdtemp(prefix="eval-selftest-"))
     try:
         clip_audio, truth = {}, []
@@ -101,6 +105,8 @@ def _selftest() -> int:
             wav = tmpdir / f"{clip_id}.wav"
             wavfile.write(wav, sr, _synth_clip(sr, dur, **spec))
             clip_audio[clip_id] = wav
+            if clip_id in CONTROL:
+                continue                     # 대조 클립은 라벨 행을 남기지 않는다
             truth += [
                 L.Label("synth", clip_id, 0.0, t0, t0 + 0.6, "jumpscare",
                         annotator="synthetic")
@@ -109,6 +115,20 @@ def _selftest() -> int:
 
         rows, per_min, total = analyse(clip_audio, truth, Params())
         print(render(rows, per_min, total))
+
+        # 🔴1 회귀 — 분모를 라벨에서 역산하면 대조 클립이 사라진다.
+        from_labels = L.by_clip(truth)                       # 옛 동작
+        from_spec = L.by_clip(truth, list(clip_audio))       # 고친 동작
+        seen_control = L.control_ratio(from_spec)
+        control_ok = (
+            set(from_labels) == set(specs) - CONTROL         # 옛 동작은 대조를 놓친다
+            and set(from_spec) == set(specs)
+            and abs(seen_control - len(CONTROL) / len(specs)) < 1e-9
+            and rows[0].fp > 0                               # 대조 클립의 오탐이 세진다
+        )
+        print(f"대조 클립: 분모 {len(from_spec)}개 중 {len(CONTROL)}개 · "
+              f"비율 {seen_control:.0%} (라벨만 보면 {L.control_ratio(from_labels):.0%}) · "
+              f"오탐 {rows[0].fp}건")
 
         # 사건별 지연 — **라벨 onset 기준**이다 (#19 리뷰 🔴1)
         dets = []
@@ -131,10 +151,22 @@ def _selftest() -> int:
         print(f"클립 경계: 다른 클립 0.05초 차 매칭 {guarded}건 "
               f"(clip_id 무시 시 {blind}건) · 본 평가 교차 {'없음' if no_cross else '있음'}")
 
+        # 🔴2 회귀 — 같은 사건을 두 사람이 찍은 CSV에서 annotator를 안 거르면
+        # 참 사건이 두 번 세지고 1:1 매칭이라 하나가 자동으로 미탐이 된다.
+        dual = truth + [L.replace_annotator(x, "A") for x in truth[:1]]
+        r_one = score(L.pick_annotator(dual, "synthetic"), dets, 3.0)
+        r_both = score(dual, dets, 3.0)
+        annot_ok = r_one.n_true == len(truth) and r_both.n_true == len(truth) + 1 \
+            and r_one.recall > r_both.recall
+        print(f"주석자 필터: 단독 {r_one.n_true}건 recall {r_one.recall:.3f} · "
+              f"이중 {r_both.n_true}건 recall {r_both.recall:.3f}")
+
         ok = (
             rows[-1].recall >= 2 / 3
             and rows[0].timeliness < rows[-1].timeliness
             and no_cross
+            and control_ok
+            and annot_ok
         )
         print("\n자체 점검:", "통과" if ok else "실패 — 파라미터 확인 필요")
         return 0 if ok else 1
@@ -146,6 +178,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="E1 — lookahead 시간별 성능 곡선")
     ap.add_argument("--labels", help="docs/labeling-guide.md §1 스키마 CSV")
     ap.add_argument("--audio", help="clip_id.wav 들이 있는 디렉터리")
+    ap.add_argument("--clips", help="클립 명세 CSV — 평가 분모. 없으면 wav 디렉터리 전체")
+    ap.add_argument("--annotator", help="이 주석자의 라벨만 쓴다 (기본: 가장 많이 단 사람)")
     ap.add_argument("--drms-min", type=float, default=0.0, help="dRMS/dt 하한 (0이면 끔)")
     ap.add_argument("--render-s", type=float, default=RENDER_S,
                     help="블러 렌더링 시간(초). M1 실측값을 넣으면 적시성에 더해진다")
@@ -162,19 +196,47 @@ def main() -> int:
     if problems:
         print("라벨 규약 위반:", *problems, sep="\n  ", file=sys.stderr)
 
-    clips = L.by_clip(truth)
-    ratio = L.control_ratio(clips)
-    if ratio < 0.30:
-        print(f"경고: 대조 클립 비율 {ratio:.0%} — §4 기준 30% 미만이라 "
-              f"정밀도 수치를 방어할 수 없다", file=sys.stderr)
+    # 주석자 — 두 사람 라벨이 한 CSV에 있으면 참 사건이 두 번 세지고,
+    # 1:1 매칭이라 둘 중 하나가 자동으로 미탐이 된다 (#19 리뷰 🔴2).
+    who = L.annotators(truth)
+    pick = a.annotator
+    if pick is None and len(who) > 1:
+        pick = max(who, key=lambda w: sum(x.annotator == w for x in truth))
+        print(f"알림: 주석자 {who}가 섞여 있어 '{pick}'만 쓴다 — "
+              f"바꾸려면 --annotator. 두 사람을 함께 읽는 것은 κ 계산뿐이다",
+              file=sys.stderr)
+    if pick is not None:
+        truth = L.pick_annotator(truth, pick)
+        if not truth:
+            print(f"주석자 '{pick}'의 라벨이 없다 (있는 것: {who})", file=sys.stderr)
+            return 1
 
     audio = {p.stem: p for p in Path(a.audio).glob("*.wav")}
-    missing = set(clips) - set(audio)
+
+    # 평가 분모 — **라벨이 아니라 클립 목록이다.** 대조 클립은 라벨 행이 0개라
+    # 라벨에서 역산하면 통째로 빠지고 오탐이 안 세진다 (#19 리뷰 🔴1).
+    if a.clips:
+        clip_ids = L.load_clips(a.clips)
+    else:
+        clip_ids = sorted(audio)
+        print("알림: --clips가 없어 wav 디렉터리 전체를 분모로 쓴다", file=sys.stderr)
+
+    clips = L.by_clip(truth, clip_ids)
+    ratio = L.control_ratio(clips)
+    if ratio < 0.30:
+        print(f"경고: 대조 클립 비율 {ratio:.0%} ({sum(c.is_control for c in clips.values())}"
+              f"/{len(clips)}) — §4 기준 30% 미만이라 정밀도 수치를 방어할 수 없다",
+              file=sys.stderr)
+
+    missing = set(clip_ids) - set(audio)
     if missing:
         print(f"경고: wav 없는 클립 {sorted(missing)}", file=sys.stderr)
+    extra = set(audio) - set(clip_ids)
+    if extra:
+        print(f"경고: 명세에 없는 wav {sorted(extra)} — 평가에서 뺀다", file=sys.stderr)
 
     rows, per_min, total = analyse(
-        {k: v for k, v in audio.items() if k in clips}, truth,
+        {k: v for k, v in audio.items() if k in set(clip_ids)}, truth,
         Params(drms_min=a.drms_min), render_s=a.render_s,
     )
     print(render(rows, per_min, total))
