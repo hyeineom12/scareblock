@@ -26,3 +26,11 @@ Thumbs.db
 node_modules/
 dist/
 build/
+
+# 클립 산출물 — 원본은 재배포하지 않는다 (labeling-guide §7)
+*.mp4
+*.wav
+
+# 파이썬 바이트코드 — PR #25가 지운 것이 다시 들어오지 않게 한다
+__pycache__/
+*.py[cod]

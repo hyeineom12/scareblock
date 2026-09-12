@@ -29,6 +29,13 @@ from pathlib import Path
 CLIP_S = 300.0      # §4 — 클립 길이 5분 이내
 MARGIN_S = 60.0     # 앞뒤로 비우는 구간 — 인트로 타이틀·엔딩 크레딧을 피한다
 WAV_SR = 16000      # 라벨링·탐지기 공용. features.py가 모노를 기대한다
+MAX_H = 720         # M1 기준이 720p다. 라벨링에 그 이상은 쓸모가 없고 내려받기만 느려진다
+
+# ELAN이 macOS에서 여는 조합으로 고정한다 — h264 + aac.
+# vp9·av01은 컨테이너가 mp4여도 ELAN 파형·재생이 안 열릴 수 있다.
+FMT = (f"bv*[vcodec^=avc1][height<={MAX_H}]+ba[ext=m4a]"
+       f"/b[vcodec^=avc1][height<={MAX_H}]"
+       f"/bv*[height<={MAX_H}]+ba/b[height<={MAX_H}]/bv*+ba/b")
 MANIFEST = "clips.csv"
 FIELDS = ["clip_id", "video_id", "clip_offset", "duration_s", "source_class", "url"]
 
@@ -96,17 +103,29 @@ def draw_offsets(duration: float, n: int, rng: random.Random,
     return sorted(round(t, 2) for t in picked)
 
 
-def cut(url: str, offset: float, clip_s: float, dest: Path) -> None:
-    """해당 구간만 내려받는다. 원본 전체를 받지 않는다 (§7 로컬 분석 전용)."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(
-        ["yt-dlp", "--no-warnings", "-f", "bv*+ba/b",
-         "--download-sections", f"*{offset}-{offset + clip_s}",
-         "--force-keyframes-at-cuts",     # 구간 경계를 정확히 자른다
-         "-o", str(dest), url],
-        capture_output=True, text=True)
+def cut(url: str, offset: float, clip_s: float, stem: Path, exact: bool = False) -> Path:
+    """해당 구간만 내려받는다. 원본 전체를 받지 않는다 (§7 로컬 분석 전용).
+
+    확장자는 yt-dlp가 붙인다. `-o`에 `.mp4`를 박으면 실제 컨테이너가 webm일 때
+    `c001.mp4.webm`이 나와 뒤 단계가 파일을 못 찾는다.
+
+    `exact`는 구간 경계에 키프레임을 강제한다 — **정확하지만 전 구간을
+    재인코딩하므로 4배 이상 느리다**(실측: 30초 클립 24초 → 105초).
+    오프셋은 무작위라 경계 정밀도가 필요하지 않으므로 기본은 끈다.
+    """
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["yt-dlp", "--no-warnings", "-f", FMT, "--merge-output-format", "mp4",
+           "--download-sections", f"*{offset}-{offset + clip_s}"]
+    if exact:
+        cmd.append("--force-keyframes-at-cuts")
+    cmd += ["-o", f"{stem}.%(ext)s", url]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"절단 실패 — {url} @{offset}\n{r.stderr.strip()[:300]}")
+    got = sorted(stem.parent.glob(f"{stem.name}.*"))
+    if not got:
+        raise RuntimeError(f"절단은 됐다는데 파일이 없다 — {stem}")
+    return got[0]
 
 
 def to_wav(src: Path, dest: Path, sr: int = WAV_SR) -> None:
@@ -141,11 +160,13 @@ def write_manifest(path: Path, rows: list[dict]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="무작위 오프셋 클립 절단 (labeling-guide §4)")
     ap.add_argument("--candidates", required=True, help="후보 목록 파일")
-    ap.add_argument("--out", required=True, help="산출 디렉터리 (mp4/ · wav/ · clips.csv)")
+    ap.add_argument("--out", required=True, help="산출 디렉터리 (video/ · wav/ · clips.csv)")
     ap.add_argument("--seed", type=int, default=20260912, help="오프셋 씨앗 — 재현용")
     ap.add_argument("--clip-s", type=float, default=CLIP_S)
     ap.add_argument("--margin-s", type=float, default=MARGIN_S)
     ap.add_argument("--start-index", type=int, default=1, help="clip_id 시작 번호")
+    ap.add_argument("--exact-cuts", action="store_true",
+                    help="구간 경계에 키프레임을 강제한다 — 4배 이상 느리다")
     ap.add_argument("--dry-run", action="store_true", help="오프셋만 뽑고 내려받지 않는다")
     a = ap.parse_args()
 
@@ -181,15 +202,15 @@ def main() -> int:
         for off in offsets:
             clip_id = f"c{idx:03d}"
             idx += 1
-            mp4 = out / "mp4" / f"{clip_id}.mp4"
+            stem = out / "video" / clip_id
             wav = out / "wav" / f"{clip_id}.wav"
             print(f"{clip_id}  {vid} @{off:.2f}s  ({c.source_class})")
             got = a.clip_s
             if not a.dry_run:
                 try:
-                    cut(c.url, off, a.clip_s, mp4)
-                    to_wav(mp4, wav)
-                    got = media_duration(mp4)
+                    media = cut(c.url, off, a.clip_s, stem, a.exact_cuts)
+                    to_wav(media, wav)
+                    got = media_duration(media)
                 except RuntimeError as e:
                     print(f"  실패 — {e}", file=sys.stderr)
                     failed.append(f"{vid}@{off}")
