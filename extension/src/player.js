@@ -191,6 +191,9 @@ SB.Player = class {
       this._lastCap = -1;
       this._lastPresented = -1;
       this._cursor = 0;
+      // 같은 이유로 rAF도 멈춰 있었다. 복귀 첫 프레임의 간격(수 초)을 끊김으로
+      // 세면 탭을 전환할 때마다 M1 연속 무드롭이 리셋된다.
+      this._lastRenderAt = 0;
       this.stats.resyncs++;
     };
 
