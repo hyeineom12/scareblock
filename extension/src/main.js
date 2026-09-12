@@ -32,6 +32,10 @@ window.SB = window.SB || {};
   }
 
   function boot() {
+    // 콘텐츠 스크립트는 매치되는 URL로 **문서가 로드될 때만** 주입된다. /watch로만
+    // 매치하면 홈·검색에서 영상을 클릭하는 SPA 경로에는 주입 자체가 없어 확장이
+    // 없는 것과 같다. 그래서 youtube.com 전체로 매치하고 여기서 걸러낸다.
+    if (location.pathname !== '/watch') return;
     const v = findVideo();
     if (!v) return;
     if (v.readyState >= 2) attach(v);

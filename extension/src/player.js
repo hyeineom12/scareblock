@@ -30,6 +30,7 @@ SB.Player = class {
     };
     this._lastPresented = -1;
     this._lastCap = -1;
+    this._cursor = 0;           // triggerAt()이 이미 지난 트리거를 다시 보지 않게 하는 자리
     this._lastRenderAt = 0;
     this._lastIncidentAt = 0;   // 마지막 끊김·디코더드롭 시각
     this._hudAt = 0;            // HUD·품질조회 스로틀
@@ -39,22 +40,51 @@ SB.Player = class {
     this._gainNow = 1;
   }
 
-  /** 계약 소비 — 탐지기가 부른다. */
+  /**
+   * 계약 소비 — 탐지기가 부른다.
+   *
+   * 배열은 **time 오름차순을 유지한다.** triggerAt()의 상수 시간 조회가 그 순서에
+   * 기댄다. 탐지기가 순서대로 주는 것이 보통이라 대개 뒤에 붙기만 한다.
+   */
   addTriggers(list) {
     for (const t of list) {
       if (typeof t.time !== 'number' || typeof t.duration !== 'number') {
         console.warn('[scareblock] 계약에 맞지 않는 트리거', t);
         continue;
       }
-      this.triggers.push(t);
+      let i = this.triggers.length;
+      while (i > 0 && this.triggers[i - 1].time > t.time) i--;
+      this.triggers.splice(i, 0, t);
+      if (i < this._cursor) this._cursor = i;   // 커서보다 앞에 끼면 되돌린다
     }
-    if (this.triggers.length > 500) this.triggers.splice(0, this.triggers.length - 500);
+    const over = this.triggers.length - 500;
+    if (over > 0) {
+      this.triggers.splice(0, over);
+      this._cursor = Math.max(0, this._cursor - over);
+    }
   }
 
+  /**
+   * 표시 시각에 걸린 트리거. **매 렌더 프레임 불린다.**
+   *
+   * 선형 탐색이면 60fps × 500건 = 초당 3만 회 비교다. 프레임당 비용이 계측을
+   * 실제로 망가뜨리는 것을 #21에서 확인했으므로 지난 트리거는 앞에서 잘라낸다.
+   * 커서는 시크·탭 복귀에서 0으로 되돌린다 (그때 표시 시각이 뒤로 간다).
+   */
   triggerAt(mediaTime) {
-    return this.triggers.find(
-      (t) => mediaTime >= t.time && mediaTime <= t.time + t.duration
-    ) || null;
+    const list = this.triggers;
+    while (
+      this._cursor < list.length &&
+      list[this._cursor].time + list[this._cursor].duration < mediaTime
+    ) {
+      this._cursor++;
+    }
+    for (let i = this._cursor; i < list.length; i++) {
+      const t = list[i];
+      if (t.time > mediaTime) break;   // 오름차순이라 뒤는 볼 필요가 없다
+      if (mediaTime <= t.time + t.duration) return t;
+    }
+    return null;
   }
 
   start() {
@@ -97,14 +127,23 @@ SB.Player = class {
   _setupAudio() {
     if (!SB._audio) {
       const ac = new AudioContext();
-      const src = ac.createMediaElementSource(this.video);
       SB._audio = {
         ac,
-        src,
+        el: null,
+        src: null,
         delay: ac.createDelay(30),   // 0.25배속이면 DELAY_SEC/0.25 = 12초가 필요하다
         gain: ac.createGain(),
         analyser: Object.assign(ac.createAnalyser(), { fftSize: 1024 }),
       };
+    }
+    // MediaElementAudioSourceNode는 만들어질 때의 엘리먼트에 **영구히** 묶인다.
+    // <video>가 교체되면 새 영상 소리는 그래프를 안 거치고 곧장 나가 지연이 사라진다
+    // (#5 리뷰 🔴1과 같은 증상, 다른 원인). 어느 엘리먼트에 물렸는지 기억해 두고
+    // 달라졌으면 소스만 다시 만든다 — AudioContext는 페이지당 개수 상한이 있어 재사용한다.
+    if (SB._audio.el !== this.video) {
+      try { SB._audio.src?.disconnect(); } catch { /* 아직 안 걸림 */ }
+      SB._audio.src = SB._audio.ac.createMediaElementSource(this.video);
+      SB._audio.el = this.video;
     }
     const { ac, src, delay, gain, analyser } = SB._audio;
     try {
@@ -143,10 +182,15 @@ SB.Player = class {
 
     // ③ 탭 숨김 — rAF·rVFC가 멈춰 링버퍼만 비는데 영상은 계속 간다.
     //    돌아오면 버퍼에 낡은 프레임만 남아 있어 과거 화면을 띄운다. 시크와 같게 다룬다.
+    //    숨어 있는 동안 rVFC는 멈추지만 presentedFrames는 재생과 함께 계속 오른다.
+    //    _lastPresented를 그대로 두면 돌아온 첫 콜백이 숨은 시간 전체를 적재누락으로
+    //    적어 30초 전환에 1,800장이 한 번에 더해진다 — 누락_초당이 오염된다.
     this._onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       this.ring.clear();
       this._lastCap = -1;
+      this._lastPresented = -1;
+      this._cursor = 0;
       this.stats.resyncs++;
     };
 
@@ -193,6 +237,8 @@ SB.Player = class {
       this.ring.clear();
       this.stats.seeks++;
       this._lastCap = -1;
+      this._lastPresented = -1;   // 시크 전후 델타는 누락이 아니다
+      this._cursor = 0;           // 표시 시각이 뒤로 가므로 트리거 커서도 되돌린다
     }
 
     if (this._lastCap < 0 || t - this._lastCap >= 1 / this.cfg.CAPTURE_FPS - 0.002) {
@@ -232,7 +278,7 @@ SB.Player = class {
       const want = hit ? cfg.FADE_DB : 1;            // 음량 페이드다운
       if (want !== this._gainNow) {
         this._gainNow = want;
-        if (this.audio?.gain) this.audio.gain.gain.value = want;
+        this._rampGain(want);
       }
       if (hit) this._drawBadge(hit);
     } else {
@@ -245,6 +291,23 @@ SB.Player = class {
     this._drawHud();
     requestAnimationFrame(this._render);
   };
+
+  /**
+   * 음량을 램프로 바꾼다.
+   *
+   * 즉시 대입하면 진폭이 한 프레임에 1 → 0.25로 꺾여 파형에 불연속이 생기고
+   * **딸깍 소리**가 난다. 페이드다운이 놀람 완화 기능 자체라 소리가 튀면
+   * 기능이 기능을 해친다. delayTime에 쓴 것과 같은 방식이다.
+   */
+  _rampGain(want) {
+    const a = this.audio;
+    if (!a?.gain) return;
+    const g = a.gain.gain;
+    const now = a.ac.currentTime;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    g.linearRampToValueAtTime(want, now + 0.08);
+  }
 
   _drawBadge(hit) {
     const { octx, cfg } = this;
