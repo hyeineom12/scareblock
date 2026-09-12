@@ -181,6 +181,8 @@ def main() -> int:
     ap.add_argument("--exact-cuts", action="store_true",
                     help="구간 경계에 키프레임을 강제한다 — 4배 이상 느리다")
     ap.add_argument("--dry-run", action="store_true", help="오프셋만 뽑고 내려받지 않는다")
+    ap.add_argument("--manifest-only", action="store_true",
+                    help="이미 받아둔 클립의 명세만 다시 쓴다 — 내려받지 않는다")
     a = ap.parse_args()
 
     out = Path(a.out)
@@ -219,7 +221,18 @@ def main() -> int:
             wav = out / "wav" / f"{clip_id}.wav"
             print(f"{clip_id}  {vid} @{off:.2f}s  ({c.source_class})")
             got = a.clip_s
-            if not a.dry_run:
+            if a.manifest_only:
+                # 이미 받아둔 파일에서 실제 길이를 읽는다. 씨앗이 같으면 오프셋도
+                # 같으므로, 명세만 다시 써도 같은 클립을 가리킨다.
+                have = [q for q in stem.parent.glob(f"{stem.name}.*")
+                        if q.suffix.lower() in MEDIA_EXT
+                        and "." not in q.name[len(stem.name) + 1:]]
+                if not have:
+                    print(f"  건너뜀 — 받아둔 파일이 없다 ({stem.name})", file=sys.stderr)
+                    failed.append(f"{vid}@{off}")
+                    continue
+                got = media_duration(have[0])
+            elif not a.dry_run:
                 try:
                     media = cut(c.url, off, a.clip_s, stem, a.exact_cuts)
                     to_wav(media, wav)
