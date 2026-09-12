@@ -215,9 +215,30 @@ SB.Player = class {
     const a = this.audio;
     if (!a) return;
     const rate = this.video.playbackRate || 1;
-    const want = Math.min(this.cfg.DELAY_SEC / rate, a.delay.maxDelayTime - 0.1);
-    // 급격히 바꾸면 클릭 잡음이 난다. 짧게 램프한다.
-    a.delay.delayTime.linearRampToValueAtTime(want, a.ac.currentTime + 0.05);
+    const param = a.delay.delayTime;
+
+    // DelayNode에 maxDelayTime 속성은 없다. createDelay()에 넘기는 인자일 뿐이고,
+    // 읽으려면 AudioParam.maxValue를 봐야 한다. 전에 a.delay.maxDelayTime을 썼다가
+    // undefined - 0.1 = NaN 이 되어 램프가 던졌고, start() 안이라 화면이 까맣게 멈췄다.
+    const ceiling = Number.isFinite(param.maxValue) ? param.maxValue - 0.1 : 10;
+    const want = Math.min(this.cfg.DELAY_SEC / rate, ceiling);
+    if (!Number.isFinite(want) || want < 0) {
+      console.warn('[scareblock] 지연 값이 유효하지 않다', { rate, want, max: param.maxValue });
+      return;
+    }
+
+    const now = a.ac.currentTime;
+    if (a.ac.state === 'suspended') {
+      // 정지 상태에서는 currentTime이 안 흘러 램프가 진행되지 않는다. 바로 넣는다.
+      param.cancelScheduledValues(now);
+      param.value = want;
+    } else {
+      // 급격히 바꾸면 클릭 잡음이 난다. 짧게 램프하되 시작점을 못박아야 한다 —
+      // 앞선 이벤트가 없으면 램프의 기준값이 정의되지 않는다.
+      param.cancelScheduledValues(now);
+      param.setValueAtTime(param.value, now);
+      param.linearRampToValueAtTime(want, now + 0.05);
+    }
     this._rateNow = rate;
   }
 
