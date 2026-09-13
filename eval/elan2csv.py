@@ -143,7 +143,7 @@ def parse_export(path: Path, clip_id: str,
     """
     notes: list[str] = []
     raw = path.read_text(encoding="utf-8-sig").splitlines()
-    parsed: list[tuple[str, float, float, str]] = []
+    parsed: list[tuple[int, str, float, float, str]] = []   # (줄 번호, 트랙, onset, offset, 텍스트)
     ints_only = True
 
     for ln, line in enumerate(raw, start=1):
@@ -200,7 +200,7 @@ def parse_export(path: Path, clip_id: str,
         # 라벨 텍스트 = **모든 시간 칸 뒤**에 남은 첫 칸. 파일 이름 열은 건너뛴다.
         text = next((c for i, c in enumerate(cells)
                      if i > last_time_at and c.strip() and not _looks_like_path(c)), "")
-        parsed.append((tier, onset, offset, text))
+        parsed.append((ln, tier, onset, offset, text))
 
     # 단위 — **클립 길이를 알면 그것으로 판정한다.** 5분 클립에 onset 2500초는 그 자체로
     # 불가능하다. 3600초 상한만 쓰면 사건이 전부 앞 3.6초 안인 밀리초 파일이 조용히
@@ -208,20 +208,35 @@ def parse_export(path: Path, clip_id: str,
     scale = 1.0
     limit = (clip_dur + 1.0) if clip_dur else MAX_PLAUSIBLE_S
     if parsed:
-        biggest = max(max(on, off) for _, on, off, _ in parsed)
-        if biggest > limit:
+        big_ln, biggest = max(((ln, max(on, off)) for ln, _, on, off, _ in parsed), key=lambda x: x[1])
+        if clip_dur and ints_only:
+            # **클립 길이를 알고 파일 전체가 정수면 크기와 무관하게 밀리초다.** 크기로만 가르면
+            # 사건이 클립 앞 0.3초 안에 통째로 든 밀리초 파일(200/260)이 여전히 초로 읽힌다
+            # (#27 재리뷰 🟡2). ELAN의 초·hh:mm:ss.ms는 소수를 쓰고, 실제 내보내기(형식 전부
+            # 켬)에서는 소수 초 열이 먼저 골라져 이 경로에 안 온다. 끝자리 0을 지우는 ELAN이
+            # 정수처럼 보이는 초를 낼 수는 있지만(`64.4`), 파일의 모든 값이 정확히 0 밀리초일
+            # 일은 사실상 없다.
+            scale = 1e-3
+            notes.append(f"{path.name}: 시간이 전부 정수라 밀리초로 읽었다(클립 길이 {clip_dur:.0f}초 기준) "
+                         f"— 초로 내보내는 게 규약이다 (elan-setup §5)")
+            if biggest * scale > limit:
+                raise ConvertError(
+                    f"{path.name}:{big_ln} 밀리초로 읽어도 {biggest * scale:.2f}초가 클립 길이 "
+                    f"{clip_dur:.0f}초를 넘는다 — 오타이거나 다른 클립의 파일이다")
+        elif biggest > limit:
             if ints_only and biggest * 1e-3 <= limit:
                 scale = 1e-3
-                basis = f"클립 길이 {clip_dur:.0f}초" if clip_dur else f"상한 {MAX_PLAUSIBLE_S:.0f}초"
-                notes.append(f"{path.name}: 시간이 정수이고 최대 {biggest:.0f}이라 {basis}를 넘어 "
-                             f"밀리초로 읽었다 — 초로 내보내는 게 규약이다 (elan-setup §5)")
+                notes.append(f"{path.name}: 시간이 정수이고 최대 {biggest:.0f}이라 상한 "
+                             f"{MAX_PLAUSIBLE_S:.0f}초를 넘어 밀리초로 읽었다 — 초로 내보내는 게 규약이다 "
+                             f"(elan-setup §5)")
             elif clip_dur:
+                # 줄 번호를 달고 원인에 오타를 넣는다 — 실제로는 이쪽이 제일 흔하다(#27 재리뷰 🟡3)
                 raise ConvertError(
-                    f"{path.name}: 사건 시각 {biggest:.2f}가 클립 길이 {clip_dur:.0f}초를 넘는다 — "
-                    f"다른 클립의 파일이거나 시간 형식이 섞였다")
+                    f"{path.name}:{big_ln} 사건 시각 {biggest:.2f}가 클립 길이 {clip_dur:.0f}초를 넘는다 — "
+                    f"오타이거나(예: 248.0 → 2480.0) 다른 클립의 파일이거나 시간 형식이 섞였다")
 
     rows: list[Row] = []
-    for tier, onset, offset, text in parsed:
+    for _ln, tier, onset, offset, text in parsed:
         amb, note = parse_label_text(text)
         # 규약은 「?」를 맨 앞에 쓰는 것이다. 뒤에 붙인 것은 조용히 넘기지 않고 알린다 —
         # 가장 어기기 쉬운 사람이 처음 쓰는 제3자다(#27 리뷰 🟡10)
@@ -306,7 +321,11 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
     notes: list[str] = []
     seen: list[str] = []
     src: dict[str, str] = {}
+    errors: list[str] = []
     for p in sorted(paths):
+      # 파일 하나의 오류로 배치 전체를 멈추지 않는다. 34개 중 12번째에서 멈추면 나머지 22개의
+      # 상태를 모른 채 고치고 다시 돌리기를 반복하게 된다(#27 재리뷰 🟡3). 전부 보고 한 번에 낸다
+      try:
         cid = clip_id_of(p)
         vid, off = ("", 0.0)
         if manifest is not None:
@@ -336,6 +355,11 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
                          "onset": r.onset, "offset": r.offset, "category": r.category,
                          "ambiguous": str(r.ambiguous).lower(), "annotator": annotator,
                          "note": r.note})
+      except ConvertError as e:
+        errors.append(str(e))
+    if errors:
+        raise ConvertError(f"파일 {len(errors)}개에서 멈췄다 — 나머지 {len(seen)}개는 읽혔다\n  "
+                           + "\n  ".join(errors))
     rows.sort(key=lambda r: (r["clip_id"], r["onset"], r["category"]))
     return rows, notes, seen
 
@@ -459,6 +483,25 @@ def _selftest() -> int:
     _, tq_notes = parse_export(tmp / "tq" / "c001.txt", "c001", 300.0)
     checks["뒤에 붙은 ?를 알린다"] = any("끝의 '?'" in n for n in tq_notes)
 
+    # #27 재리뷰 🟡2 — 클립 길이를 알고 파일 전체가 정수면 크기와 무관하게 밀리초다
+    import tempfile as _tf
+    _t = Path(_tf.mkdtemp(prefix="elan2csv-units-"))
+    (_t / "c001.txt").write_text("jumpscare\t200\t260\n", encoding="utf-8")
+    r_small, _ = parse_export(_t / "c001.txt", "c001", 300.0)
+    checks["정수 파일은 크기와 무관하게 밀리초로 읽는다 (200 → 0.2초)"] = r_small[0].onset == 0.2
+
+    # #27 재리뷰 🟡3 — 오타는 줄 번호를 달고, 파일 하나가 배치를 멈추지 않고 전부 보고한다
+    (_t / "c002.txt").write_text("jumpscare\t5.0\t5.6\nblood\t20.1\t2480.0\n", encoding="utf-8")
+    (_t / "c003.txt").write_text("siren\t10.5\t9999.0\n", encoding="utf-8")
+    try:
+        convert([_t / "c002.txt", _t / "c003.txt"], {"c002": ("v", 0.0), "c003": ("v", 0.0)}, "B",
+                {"c002": 300.0, "c003": 300.0})
+        batch_msg = ""
+    except ConvertError as e:
+        batch_msg = str(e)
+    checks["오타는 줄 번호를 달고 배치 전체를 한 번에 보고한다"] = (
+        "c002.txt:2" in batch_msg and "c003.txt:1" in batch_msg and "오타" in batch_msg)
+
     if got != want:
         print("  기대에 없는 것:", sorted(got - want))
         print("  빠진 것:", sorted(want - got))
@@ -511,7 +554,9 @@ def main() -> int:
         durations = load_durations(Path(a.clips))
     else:
         print("경고: --clips가 없어 video_id와 clip_offset이 빈 값이 된다. "
-              "§1이 요구하는 열이고 원본과 대조할 유일한 단서다", file=sys.stderr)
+              "§1이 요구하는 열이고 원본과 대조할 유일한 단서다. "
+              "그리고 **단위 판정이 3600초 상한으로 떨어진다** — 사건이 앞 3.6초 안에 몰린 "
+              "밀리초 파일은 1000배 틀린 채 알림 없이 나온다", file=sys.stderr)
 
     try:
         rows, notes, seen = convert(paths, manifest, a.annotator, durations)
