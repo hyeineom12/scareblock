@@ -473,11 +473,15 @@ setTimeout(() => {
 >
 > **출처** — 1.5초는 PoC가 점프 스케어로 데모를 돌린 값이다(`poc/delay-playback.js:204` `scheduleBlur(video.currentTime, 1.5)`,
 > `:223` `blurNow(dur = 1.5)`). 지속 카테고리에서는 아직 검증되지 않았고, 짧게 느껴지면 **꼬리 길이만** 조정한다.
+> 구간 정의(`time`부터 `time + duration`까지)는 제품 코드에서도 참이다 — `extension/src/player.js:85`
+> `if (mediaTime <= t.time + t.duration) return t;`
 >
 > **⚠ 라벨링을 시작한 뒤에는 꼬리 길이를 바꾸지 않는다.** 병합 창과 같은 값이라, 2.0초로 올리면 지금 2건으로 센 것
 > 중 일부가 1건이 되어야 하고 이미 찍은 라벨을 다시 봐야 한다. 바꿔야 할 이유가 생기면 라벨을 다시 보는 비용과
-> 함께 판단하고, **네 자리를 같이 고친다** — 이 계약 · [라벨 기준 §2](docs/labeling-guide.md#2-무엇을-1건으로-세는가) ·
-> `eval/labels.py`의 `MERGE_GAP` · [제3자 안내 §5](docs/labeling-guide-3rd-party.md).
+> 함께 판단하고, **여섯 자리를 같이 고친다** — 이 계약 · [라벨 기준 §2](docs/labeling-guide.md#2-무엇을-1건으로-세는가) ·
+> `eval/labels.py`의 `MERGE_GAP` · [제3자 안내 §5](docs/labeling-guide-3rd-party.md) ·
+> 계약을 다시 적은 예시 둘(`docs/proposal.md` · `extension/README.md`). 예시를 찾을 때는 값이 아니라
+> 개념으로 훑는다 — `git grep -n 'duration: [0-9]'`.
 
 ## 위험과 대응
 
