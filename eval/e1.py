@@ -322,12 +322,24 @@ def main() -> int:
 
     truth, used, stray, missing, extra = evaluation_set(truth, clip_ids, audio)
     if stray:
-        print(f"경고: 명세에 없는 클립의 라벨 {stray} — 평가에서 뺀다 "
+        # --clips 없이 돌리면 분모가 wav 목록이라, 이 라벨이 빠지는 이유는 명세가 아니라
+        # wav가 없어서다 — 경고가 스스로와 모순되지 않게 문구를 가른다 (#26 재리뷰 🟢4)
+        where = "명세에 없는 클립" if a.clips else "wav 없는 클립"
+        print(f"경고: {where}의 라벨 {stray} — 평가에서 뺀다 "
               f"(clip_id 오타면 참 사건이 사라져 recall이 부푼다)", file=sys.stderr)
     if missing:
         print(f"경고: wav 없는 클립 {missing}", file=sys.stderr)
     if extra:
         print(f"경고: 명세에 없는 wav {extra} — 평가에서 뺀다", file=sys.stderr)
+
+    # 평가할 wav가 하나도 없으면 **표를 내지 않는다.** 0으로 채운 표는 「lookahead 0에서
+    # 적시성이 무너졌다」와 생김새가 같아서, --audio 경로를 잘못 준 결과가 E1이 주장하려는
+    # 그림으로 읽힌다. 이 하니스가 막아온 것은 조용히 틀린 숫자인데, 이건 그럴듯한 숫자다
+    # (#26 재리뷰 🟡1).
+    if not used:
+        print(f"실패: 평가할 wav가 없다 — --audio {a.audio} 에서 명세의 클립을 하나도 찾지 못했다. "
+              f"표를 내지 않는다", file=sys.stderr)
+        return 1
 
     # 대조 비율은 **실제로 평가된 집합**으로 잰다 — 30% 기준이 지키려는 것은 출력된 표다
     clips = L.by_clip(truth, list(used))
