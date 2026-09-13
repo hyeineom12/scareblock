@@ -4,9 +4,9 @@
     python3 -m eval.e1 --labels labels.csv --audio _local/wav
     python3 -m eval.e1 --selftest          # 합성 오디오로 파이프라인 점검
 
-주장: lookahead 0에서 적시성이 무너지면 "지연이 필요하다"가 증명된다.
-곡선이 1초 근처에서 평평해지면 3초는 과잉이라는 뜻이고, 그때는
-"필요한 양은 3초가 아니라 X초"로 쓴다 — 그쪽이 더 강한 결과다.
+헤드라인은 **탐지 지연 분포**(라벨 onset → 확신; 중앙값·p90·최댓값)다.
+lookahead 0 열의 적시성 0은 확신 시각을 분석 창 끝으로 정의했기 때문에 정의상
+성립하므로 결과가 아니다. p90이 1초 근처면 "필요한 양은 3초가 아니라 X초"로 쓴다.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from scipy.io import wavfile
 
 from . import labels as L
 from .detect import Detection, Params, detections_per_minute, run
-from .evaluate import RENDER_S, match, score
+from .evaluate import RENDER_S, latency_summary, match, score
 from .features import extract, load_wav
 
 LOOKAHEADS = [0.0, 0.5, 1.0, 2.0, 3.0, 5.0]
@@ -93,18 +93,39 @@ def render(rows, per_min: float, total_s: float,
         head += f" · onset 되짚기 상한 {rows[0].onset_capped}건"
     if rows[0].render_s:
         head += f" · 렌더링 {rows[0].render_s:.2f}s 포함"
+    # 헤드라인 — 탐지 지연 분포. 머리줄(표의 성격) 바로 다음, 표보다 먼저 둔다.
+    # lookahead 0 열은 정의상 0이라 결과로 부를 수 있는 것은 이 분포다(6e 분석, 사용자 결정 09.13)
+    s = latency_summary(rows[0].latencies)
+    render_s = rows[0].render_s
+    if s is None:
+        headline = ["**탐지 지연** — 매칭된 사건이 없어 분포를 낼 수 없다"]
+    else:
+        tail = f" + 렌더링 {render_s:.2f} s" if render_s else " (렌더링 시간 미측정)"
+        headline = [
+            f"**탐지 지연** (라벨 onset → 확신, 매칭 {s['n']}건) — "
+            f"중앙값 {s['median']:.3f} s · p90 {s['p90']:.3f} s · 최댓값 {s['max']:.3f} s",
+            f"→ 필요한 지연량(p90 기준) ≈ {s['p90'] + render_s:.3f} s{tail}"
+            + (" · 사건 10건 미만이라 p90은 보간값" if s["n"] < 10 else ""),
+        ]
     out = [
         head,
+        *headline,
         "",
-        "| lookahead | 적시성 | precision | recall | F1 | TP | FP | FN |",
-        "|---|---|---|---|---|---|---|---|",
+        "| lookahead | 적시성 | 잡은 것 중 제때 | precision | recall | F1 | TP | FP | FN |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for m in rows:
         out.append(
-            f"| {m.lookahead:.1f}s | **{m.timeliness:.3f}** | {m.precision:.3f} | "
-            f"{m.recall:.3f} | {m.f1:.3f} | {m.tp} | {m.fp} | {m.fn} |"
+            f"| {m.lookahead:.1f}s | **{m.timeliness:.3f}** | {m.timely_of_detected:.3f} | "
+            f"{m.precision:.3f} | {m.recall:.3f} | {m.f1:.3f} | {m.tp} | {m.fp} | {m.fn} |"
         )
-    out += ["", "적시성 = (라벨 onset → 확신) + 렌더링 시간 ≤ lookahead 인 참 사건의 비율."]
+    out += [
+        "",
+        "적시성 = (라벨 onset → 확신) + 렌더링 시간 ≤ lookahead 인 참 사건의 비율.",
+        "적시성 = recall × 잡은 것 중 제때 — 못 잡은 사건도 「늦음」으로 세지므로 recall을 넘을 수 없다.",
+        "잡은 것 중 제때 = in_time / TP — lookahead별로 읽으면 탐지 지연 분포의 누적 분포다.",
+        "lookahead 0 열은 확신 시각이 분석 창의 끝이라 정의상 0이다 — 결과가 아니다.",
+    ]
     return "\n".join(out)
 
 
@@ -244,8 +265,30 @@ def _selftest() -> int:
                      and _raises("clip_id\nc001\nc001\n", "두 번"))
         print(f"명세 파서: 정상·열 없음·빈 명세·중복 {'통과' if parser_ok else '실패'}")
 
+        # 사용자 결정(09.13) — in_time/tp 열과 지연 분포 헤드라인
+        txt = render(rows, per_min, total, n_used=len(clip_audio), n_expected=len(specs))
+        lines = txt.splitlines()
+        lat_all = sorted(d.fire - t.onset for t, d in pairs)
+        summ = latency_summary(rows[0].latencies)
+        cdf_ok = all(
+            abs(m.timely_of_detected - (sum(1 for x in lat_all if x + m.render_s <= m.lookahead)
+                                        / len(lat_all) if lat_all else 0.0)) < 1e-9
+            for m in rows)
+        identity_ok = all(abs(m.timeliness - m.recall * m.timely_of_detected) < 1e-9
+                          and m.timeliness <= m.recall + 1e-12 for m in rows)
+        headline_ok = (summ is not None and summ["n"] == rows[0].tp
+                       and abs(summ["median"] - float(np.median(lat_all))) < 1e-9
+                       and lines[1].startswith("**탐지 지연**") and "p90" in lines[1]
+                       and "잡은 것 중 제때" in txt and lines[0].startswith("클립"))
+        print(f"헤드라인: {lines[1]}")
+        print(f"적시성 = recall × 잡은 것 중 제때 {'성립' if identity_ok else '불성립'} · "
+              f"잡은 것 중 제때 = 지연 CDF {'일치' if cdf_ok else '불일치'}")
+
         ok = (
-            mirror_ok
+            identity_ok
+            and cdf_ok
+            and headline_ok
+            and mirror_ok
             and head2_ok
             and parser_ok
             and head_ok
