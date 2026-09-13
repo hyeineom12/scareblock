@@ -89,6 +89,12 @@ def probe(url: str) -> tuple[str, float]:
     return vid, float(dur)
 
 
+def is_whole(duration: float, clip_s: float) -> bool:
+    """원본을 통째로 쓰는가. **`draw_offsets`와 내려받기가 같은 판정을 쓴다** — 둘이 갈리면
+    구간 지정 없이 원본 전체를 받게 되고, 롱플레이면 몇 시간짜리다(#24 재리뷰 🟢6)."""
+    return duration <= clip_s
+
+
 def draw_offsets(duration: float, n: int, rng: random.Random,
                  clip_s: float = CLIP_S, margin_s: float = MARGIN_S) -> list[float]:
     """겹치지 않는 무작위 오프셋 n개. 영상이 짧으면 가능한 개수만 돌려준다.
@@ -99,7 +105,7 @@ def draw_offsets(duration: float, n: int, rng: random.Random,
     # **원본이 클립 길이보다 짧거나 비슷하면 통째로 쓴다.** §4는 「5분 이내」이므로
     # 3분짜리 단편을 통째로 쓰는 것이 규칙에 맞고, 자를 지점을 고를 일이 없어
     # 표집 편향이 0이 된다. 단편은 클라이맥스가 끝에 있어 창을 뽑으면 놓치기 쉽다.
-    if duration <= clip_s:
+    if is_whole(duration, clip_s):
         return [0.0]
     lo, hi = margin_s, duration - margin_s - clip_s
     if hi <= lo:
@@ -193,7 +199,8 @@ def write_manifest(path: Path, rows: list[dict]) -> None:
     """§4의 대조 클립 비율을 나중에 계산할 수 있는 유일한 근거다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=FIELDS)
+        # 옛 명세 행을 합쳐 쓸 때 열 구성이 다를 수 있다 — 없는 열은 빈 칸, 모르는 열은 버린다
+        w = csv.DictWriter(f, fieldnames=FIELDS, restval="", extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
 
@@ -221,7 +228,9 @@ def main() -> int:
         with open(out / MANIFEST, newline="", encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 try:
-                    old_dur[r["clip_id"]] = float(r.get("video_duration_s") or 0)
+                    # 키는 영상이다 — clip_id는 원본이 바뀌면 밀릴 수 있는 바로 그 대상이라,
+                    # clip_id로 대조하면 밀린 뒤 엉뚱한 쌍을 비교한다(#24 재리뷰 🟡3)
+                    old_dur[r["video_id"]] = float(r.get("video_duration_s") or 0)
                 except (KeyError, ValueError):
                     pass
     cands = parse_candidates(Path(a.candidates))
@@ -248,9 +257,11 @@ def main() -> int:
         rng = random.Random(f"{a.seed}:{vid}")
         offsets = draw_offsets(dur, c.n_clips, rng, a.clip_s, a.margin_s)
         if not offsets:
-            print(f"건너뜀 — 길이 {dur:.0f}초로는 {a.clip_s:.0f}초 클립을 못 뽑는다 ({vid})",
-                  file=sys.stderr)
+            print(f"건너뜀 — 길이 {dur:.0f}초로는 {a.clip_s:.0f}초 클립을 못 뽑는다 ({vid}) · "
+                  f"번호 {c.n_clips}개를 비워둔다", file=sys.stderr)
             failed.append(c.url)
+            # 지금은 도달 불가지만, 번호가 런타임 결과에 안 묶인다는 불변식을 여기서도 지킨다(#24 재리뷰 🟢5)
+            idx += c.n_clips
             continue
         if len(offsets) < c.n_clips:
             print(f"알림 — {vid}에서 {c.n_clips}개 요청, {len(offsets)}개만 가능", file=sys.stderr)
@@ -272,27 +283,32 @@ def main() -> int:
                     print(f"  건너뜀 — 받아둔 파일이 없다 ({stem.name})", file=sys.stderr)
                     failed.append(f"{vid}@{off}")
                     continue
-                # wav이 없으면 명세에는 있는데 평가에 못 들어가고, 라벨 0건이라 대조 클립으로
-                # 잘못 세진다(#24 리뷰 🟡2) — 명세에 넣지 않는다
+                # wav이 없으면 영상에서 **그 자리에서 뽑는다.** 명세에서 빼면 이미 라벨이 달린 클립이
+                # labels.csv에는 있는데 clips.csv에는 없어 조인에서 미아가 된다(#24 재리뷰 🟡4).
+                # 뽑기까지 실패할 때만 뺀다 — 넣으면 라벨 0건이라 대조 클립으로 잘못 세진다
                 if not wav.exists():
-                    print(f"  건너뜀 — {wav.name}이 없다. 명세에 넣으면 대조 클립으로 잘못 세진다",
-                          file=sys.stderr)
-                    failed.append(f"{vid}@{off}")
-                    continue
+                    try:
+                        to_wav(media, wav)
+                        print(f"  알림 — {wav.name}이 없어 {media.name}에서 뽑았다", file=sys.stderr)
+                    except RuntimeError as e:
+                        print(f"  건너뜀 — {wav.name}을 뽑지 못했다. 명세에 넣으면 대조 클립으로 "
+                              f"잘못 세진다 — {e}", file=sys.stderr)
+                        failed.append(f"{vid}@{off}")
+                        continue
                 got = media_duration(media)
                 # 디스크의 파일이 이 오프셋·길이로 받은 것인지 — 길이로라도 대조한다
                 expect = min(a.clip_s, dur)
                 if abs(got - expect) > 20:
                     print(f"  경고 — {media.name} 길이 {got:.0f}초가 기대 {expect:.0f}초와 다르다. "
                           f"다른 --clip-s나 씨앗으로 받은 파일일 수 있다", file=sys.stderr)
-                prev = old_dur.get(clip_id)
+                prev = old_dur.get(vid)
                 if prev and abs(prev - dur) > 1.0:
-                    print(f"  경고 — {clip_id} 원본 길이가 명세({prev:.0f}초)와 지금({dur:.0f}초) 다르다. "
+                    print(f"  경고 — {vid} 원본 길이가 명세({prev:.0f}초)와 지금({dur:.0f}초) 다르다. "
                           f"재업로드·편집이면 같은 씨앗이라도 오프셋이 달라진다", file=sys.stderr)
             elif not a.dry_run:
                 try:
                     # 통째로 쓰는 클립(오프셋 0 · 원본이 더 짧음)은 구간 지정 없이 받는다
-                    span = 0.0 if (off == 0.0 and dur <= a.clip_s) else a.clip_s
+                    span = 0.0 if is_whole(dur, a.clip_s) else a.clip_s
                     media = cut(c.url, off, span, stem, a.exact_cuts)
                     to_wav(media, wav)
                     got = media_duration(media)
@@ -313,6 +329,16 @@ def main() -> int:
     if a.dry_run:
         print(f"\n[dry-run] 클립 {len(rows)}개 계획 — 명세를 쓰지 않았다")
     else:
+        # **--start-index로 끝에 더하는 실행은 기존 명세를 날리면 안 된다.** 이번 실행의 행만 쓰면
+        # 앞 N행이 조용히 사라진다(#24 재리뷰 🟡1). 1이 아니면 이번에 안 만든 기존 행을 합친다.
+        if a.start_index != 1 and manifest.exists():
+            new_ids = {r["clip_id"] for r in rows}
+            with open(manifest, newline="", encoding="utf-8") as f:
+                keep = [r for r in csv.DictReader(f) if r.get("clip_id") not in new_ids]
+            if keep:
+                print(f"알림 — --start-index {a.start_index}: 기존 명세 {len(keep)}행을 유지하고 "
+                      f"{len(rows)}행을 더한다", file=sys.stderr)
+            rows = sorted(keep + rows, key=lambda r: r["clip_id"])
         write_manifest(manifest, rows)
         print(f"\n클립 {len(rows)}개 · 명세 {manifest}")
     total = sum(r["duration_s"] for r in rows) / 60

@@ -49,7 +49,7 @@ aqz-KE-bpKQ,c007,742.0,46.33,47.10,jumpscare,false,B,문 쾅 + 화면 컷
 
 ```csv
 clip_id,video_id,clip_offset,duration_s,source_class,url,seed,clip_s,margin_s,video_duration_s
-c001,f7jkZXvaB4g,4347.76,300.11,scare,f7jkZXvaB4g,20260912,300.0,60.0,5743.0
+c001,f7jkZXvaB4g,4347.76,300.11,scare,https://www.youtube.com/watch?v=f7jkZXvaB4g,20260912,300.0,60.0,5743.0
 ```
 
 **이 파일이 「무엇을 봤나」의 유일한 근거다.** 라벨은 「무엇이 있었나」만 말하므로,
