@@ -99,15 +99,19 @@ def match(truth: list[Label], dets: list[Detection], tol: float = MATCH_TOL):
 def latency_summary(latencies) -> dict | None:
     """탐지 지연 분포의 요약 — E1의 헤드라인. 매칭이 없으면 None.
 
-    `L = 0` 열은 확신 시각을 분석 창의 끝으로 정의했기 때문에 **정의상** 0이다.
-    그래서 결과로 부를 수 있는 것은 이 분포다 — 「필요한 지연량」은 p90으로 읽는다.
+    값은 `확신 시각 − 라벨 onset`이다. 확신 시각을 분석 창의 끝으로 두므로 **라벨 onset이 실제
+    상승 시작점이면 음수가 될 수 없다.** 그러나 매칭은 탐지기가 되짚은 onset과 ±0.5초로 붙으므로,
+    주석자가 정점 근처를 찍어 라벨 onset이 늦으면 **음수가 나온다**(#33 리뷰 🔴1). 그래서 음수 건수를
+    함께 낸다. 결과로 부를 수 있는 것은 이 분포다 — 「필요한 지연량」은 p90으로 읽는다.
     사건 수가 적으면 p90은 보간값이라 n을 함께 낸다.
     """
-    xs = np.asarray(sorted(latencies), dtype=float)
+    # score()가 이미 정렬해 넣고 median·percentile도 스스로 정렬한다 — 다시 정렬하지 않는다(#33 리뷰 🟢6)
+    xs = np.asarray(latencies, dtype=float)
     if xs.size == 0:
         return None
     return {"n": int(xs.size), "median": float(np.median(xs)),
-            "p90": float(np.percentile(xs, 90)), "max": float(xs.max())}
+            "p90": float(np.percentile(xs, 90)), "max": float(xs.max()),
+            "negative": int((xs < 0).sum())}
 
 
 def score(truth: list[Label], dets: list[Detection], lookahead: float,
