@@ -454,23 +454,30 @@ setTimeout(() => {
 
 ```javascript
 [
-  { time: 13.42, category: "jumpscare", confidence: 0.87, duration: 1.2, source: "rule" },
-  { time: 48.10, category: "siren",     confidence: 0.64, duration: 3.5, source: "yamnet" },
-  { time: 91.20, category: "blood",     confidence: 0.71, duration: 2.0, source: "clip-zeroshot" }
+  { time: 13.42, category: "jumpscare", confidence: 0.87, duration: 1.5, source: "rule" },          // 순간 사건 + 꼬리 1.5초
+  { time: 48.10, category: "siren",     confidence: 0.64, duration: 3.5, source: "yamnet" },        // 사이렌 2.0초 + 꼬리 1.5초
+  { time: 91.20, category: "blood",     confidence: 0.71, duration: 2.0, source: "clip-zeroshot" }  // 유혈 0.5초 + 꼬리 1.5초
 ]
 ```
 
 `source` — 어떤 모델이 탐지했는지 기록해두면 05단계 카테고리별·모델별 성능표 집계가 쉬워진다.
 
-`duration` — 블러를 유지할 시간(초). **탐지기가 주지 않으면 기본 1.5초를 쓴다.**
+`duration` — 블러를 유지할 시간(초). **사건이 끝난 뒤 1.5초를 더 덮는다** — 탐지기가 사건 길이를 알면
+`길이 + 1.5`, 모르면 `1.5`. 블러는 `time`에서 시작해 `time + duration`까지 걸린다.
 
-> **이 기본값은 라벨 병합 창과 같은 값이다.** [라벨 기준 §2](docs/labeling-guide.md#2-무엇을-1건으로-세는가)가
-> "앞 사건 `offset`으로부터 1.5초 안이면 1건"으로 세는 근거가 이 값이다 — 한 블러로 덮이는 두 사건을
-> 2건으로 세면 평가에서 하나를 놓친 것으로 잡힌다.
+> **왜 「기본 지속 시간」이 아니라 「꼬리」인가.** 블러는 사건 **시작**(`time`)부터 걸리는데
+> [라벨 기준 §2](docs/labeling-guide.md#2-무엇을-1건으로-세는가)의 병합 창은 앞 사건의 **끝**(`offset`)에서 1.5초를 잰다.
+> 둘을 같은 단위로 맞추려면 블러가 사건 끝 뒤로 1.5초를 덮어야 한다. 「기본 1.5초」로 두면 순간 사건인
+> 점프 스케어에서만 맞고, 수 초씩 지속되는 사이렌·유혈·거미·주사기에서는 끝나는 프레임에 블러가 풀려
+> **라벨은 1건인데 개입은 두 번**이 된다. UX로도 사이렌이 멎는 그 순간에 가림이 풀리면 가린 의미가 없다.
 >
-> **⚠ 라벨링을 시작한 뒤에는 이 값을 바꾸지 않는다.** 2.0초로 올리면 지금 2건으로 센 것 중 일부가
-> 1건이 되어야 하고, 이미 찍은 라벨 전체를 다시 봐야 한다(축소셋 기준 130분).
-> 바꿔야 할 이유가 생기면 라벨을 다시 보는 비용과 함께 판단한다.
+> **출처** — 1.5초는 PoC가 점프 스케어로 데모를 돌린 값이다(`poc/delay-playback.js:204` `scheduleBlur(video.currentTime, 1.5)`,
+> `:223` `blurNow(dur = 1.5)`). 지속 카테고리에서는 아직 검증되지 않았고, 짧게 느껴지면 **꼬리 길이만** 조정한다.
+>
+> **⚠ 라벨링을 시작한 뒤에는 꼬리 길이를 바꾸지 않는다.** 병합 창과 같은 값이라, 2.0초로 올리면 지금 2건으로 센 것
+> 중 일부가 1건이 되어야 하고 이미 찍은 라벨을 다시 봐야 한다. 바꿔야 할 이유가 생기면 라벨을 다시 보는 비용과
+> 함께 판단하고, **네 자리를 같이 고친다** — 이 계약 · [라벨 기준 §2](docs/labeling-guide.md#2-무엇을-1건으로-세는가) ·
+> `eval/labels.py`의 `MERGE_GAP` · [제3자 안내 §5](docs/labeling-guide-3rd-party.md).
 
 ## 위험과 대응
 
