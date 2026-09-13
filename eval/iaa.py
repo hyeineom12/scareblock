@@ -54,6 +54,8 @@ def _fmt(v: float) -> str:
 
 
 def band(k: float) -> str:
+    if k != k:                          # nan은 모든 비교가 False라 「모호하다」로 떨어진다(#32 재리뷰 🔴)
+        return "판정 불가 — κ가 정의되지 않는다"
     for lo, text in BANDS:
         if k >= lo:
             return text
@@ -119,7 +121,12 @@ def cohen_kappa(items: list[tuple[str, str]]) -> tuple[float, float, float]:
 
 
 def _slices(events: list[Label], dur: float, w: float) -> set[int]:
-    """사건이 겹치는 구간 번호들."""
+    """사건이 겹치는 구간 번호들.
+
+    `dur`보다 뒤에서 시작한 사건은 빈 집합이 된다 — **호출하는 쪽이 `dur`를 마지막 offset까지
+    늘려서 넘긴다**(`report`). 여기서 조용히 버리면 한쪽만 길이 밖으로 나간 불일치가 사라져
+    일치도가 항상 올라간다(#32 재리뷰 🔴).
+    """
     out: set[int] = set()
     # 밀리초 정수로 나눈다. `10.0 // 0.1 == 99.0`처럼 부동소수 내림이 0.05초 차이 라벨을
     # 구간 두 개만큼 어긋나게 해 일치도에 편향으로 들어갔다(#27 리뷰 🟡4)
@@ -215,9 +222,16 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
         out.append("\n두 사람이 함께 본 클립이 없다 — 일치도를 계산할 수 없다.")
         return "\n".join(out), float("nan")
 
+    # 건수 줄과 지표가 같은 집합을 보게 `both`로 좁힌다. 명세 밖 클립의 라벨은 따로 알린다(#32 재리뷰 🟡)
+    stray = sorted({x.clip_id for x in la + lb} - ca - cb) if by_spec else []
+    n_stray = sum(1 for x in la + lb if x.clip_id in stray)
+    la = [x for x in la if x.clip_id in both]
+    lb = [x for x in lb if x.clip_id in both]
+
     per_clip: dict[str, tuple[list[Label], list[Label], float]] = {}
     pairs: list[Pair] = []
     no_dur: list[str] = []
+    over: list[str] = []
     for cid in both:
         ea = [x for x in la if x.clip_id == cid]
         eb = [x for x in lb if x.clip_id == cid]
@@ -231,6 +245,13 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
                 no_dur.append(cid)
                 continue
             dur = max(e.offset for e in ea + eb)   # 명세에 길이가 없으면 마지막 offset까지로 본다
+        elif ea or eb:
+            # 명세 길이(실측 파일 길이)보다 뒤까지 찍힌 사건을 지우지 않는다 — 길이를 라벨까지 늘리고 알린다.
+            # 지우면 대개 한쪽만 밖으로 나간 불일치가 사라져 일치도가 부풀려진다(#32 재리뷰 🔴)
+            last = max(e.offset for e in ea + eb)
+            if last > dur:
+                over.append(f"{cid}(+{last - dur:.2f}초)")
+                dur = last
         per_clip[cid] = (ea, eb, dur)
 
     n_match = sum(1 for p in pairs if p.matched)
@@ -251,6 +272,10 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
 
     if no_dur:
         out.append(f"  ⚠ 클립 길이를 몰라 구간 계산에서 뺀 사건 0건 클립 {len(no_dur)}개: {', '.join(no_dur)} — --clips를 준다")
+    if over:
+        out.append(f"  ⚠ 명세 길이보다 뒤까지 찍힌 사건이 있어 구간 계산 길이를 마지막 offset까지 늘렸다: {', '.join(over)}")
+    if stray:
+        out.append(f"  ⚠ 검토 명세에 없는 클립의 라벨 {n_stray}건({', '.join(stray)}) — 계산에서 빠졌다. 명세가 낡았는지 확인한다")
     gaps = [p.gap for p in pairs if p.matched]
     out.append("")
     out.append(f"사건 — {who_a} {len(la)}건 · {who_b} {len(lb)}건 · "
@@ -282,7 +307,12 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
         out.append(f"⚠ **사건 매칭 κ가 정의되지 않는다.** 매칭된 사건 {n_match}건이 "
                    f"전부 같은 카테고리이고 한쪽만 단 사건도 없어, 판정에 분산이 "
                    f"없다(pe={pe_ev:.3f}). 완전 일치인데 κ를 낼 수 없는 경우다.")
-        out.append(f"→ **시간 구간 κ {k_sl:.3f}** 를 대표값으로 본다: {band(k_sl)}")
+        if k_sl != k_sl:
+            # 구간 κ까지 nan이면 두 사람의 판정이 구간 단위로도 전부 같다 — 불일치가 아니므로 판정하지 않는다
+            out.append("→ **시간 구간 κ도 정의되지 않는다** — 구간 단위로도 판정이 전부 같다. "
+                       "불일치가 아니라 분산이 없는 것이므로 기준표로 판정하지 않는다")
+        else:
+            out.append(f"→ **시간 구간 κ {k_sl:.3f}** 를 대표값으로 본다: {band(k_sl)}")
         headline = k_sl
     # 역설 판정은 카테고리가 1종일 때만 한다. 5종에서 진짜 카테고리 혼동으로 κ가 낮은 것을
     # 구간 κ로 넘기면 카테고리를 안 보는 지표가 그 불일치를 지운다(#27 리뷰 🟡7)
@@ -301,6 +331,8 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
                f"(PSA만 유병률에 흔들리지 않는다)")
     if abs(w - SLICE_S) > 1e-9:
         out.append(f"   ⚠ 구간 폭 {w*1000:.0f} ms — 보고값은 {SLICE_S*1000:.0f} ms 고정이고 이 결과는 민감도 확인이다")
+    if abs(tol - TOL) > 1e-9:
+        out.append(f"   ⚠ onset 허용오차 ±{tol:g}초 — 보고값은 §6의 ±{TOL:g}초 고정이고 이 결과는 민감도 확인이다")
 
     bad = [p for p in pairs if not p.agreed]
     if bad:
@@ -407,6 +439,34 @@ def _selftest() -> int:
                       reviewed_a={"c001", "c005", "c009"}, reviewed_b={"c001", "c005", "c009"})
     checks["길이 모르는 0건 클립은 구간 계산에서 빼고 알린다"] = "클립 길이를 몰라" in txt10 and "c009" in txt10
 
+    # ⑪ #32 재리뷰 🔴 — 명세 길이 밖 사건을 지우지 않는다. 길이를 1.3초 줄여도 일치도가 오르면 안 된다
+    tail = [_lab("c001", 12.0, 13.0, "B"), _lab("c001", 12.05, 13.02, "A"),
+            _lab("c001", 298.9, 299.4, "B"), _lab("c001", 298.6, 299.2, "A")]
+    txt11a, _ = report(tail, "B", "A", {"c001": 300.0})
+    txt11b, _ = report(tail, "B", "A", {"c001": 298.7})
+    row = lambda t, name: t.split(f"| **{name}**")[1].split("|")[1].strip()   # 값 칸
+    checks["명세 길이 밖 사건을 지우지 않고 알린다 (구간 κ·PSA가 길이에 안 흔들린다)"] = (
+        row(txt11a, "시간 구간 κ") == row(txt11b, "시간 구간 κ")
+        and row(txt11a, "양성 특정 일치도") == row(txt11b, "양성 특정 일치도")
+        and "명세 길이보다 뒤까지" in txt11b and "c001(+0.70초)" in txt11b)
+
+    # ⑫ #32 재리뷰 🔴 — 사건 κ·구간 κ가 둘 다 nan이면 「모호하다」가 아니다
+    full = [_lab("c001", 0.0, 1.0, "B"), _lab("c001", 0.0, 1.0, "A")]
+    txt12, _ = report(full, "B", "A", {"c001": 1.0})
+    checks["band(nan)은 판정 불가 · 둘 다 nan이면 「모호하다」가 아니다"] = (
+        band(float("nan")).startswith("판정 불가") and "기준이 모호하다" not in txt12
+        and "시간 구간 κ도 정의되지 않는다" in txt12)
+
+    # ⑬ #32 재리뷰 🟡 — --tol을 바꾸면 민감도 확인이라고 적는다
+    txt13, _ = report(same, "B", "A", dur, tol=5.0)
+    checks["--tol을 바꾸면 민감도 경고"] = "허용오차 ±5초" in txt13 and "허용오차" not in txt[txt.find("보고 —"):]
+
+    # ⑭ #32 재리뷰 🟡 — 건수 줄은 both만 세고, 명세 밖 라벨은 알린다
+    txt14, _ = report(z + [_lab("c777", 5, 6, "B")], "A", "B", dur5,
+                      reviewed_a={"c001", "c005"}, reviewed_b={"c001", "c005"})
+    checks["건수는 이중 라벨링 클립만 · 명세 밖 라벨은 알린다"] = (
+        "B 1건" in txt14 and "명세에 없는 클립의 라벨 1건(c777)" in txt14)
+
     print("=" * 68)
     print(txt4)
     print("=" * 68)
@@ -427,7 +487,8 @@ def main() -> int:
     ap.add_argument("--a", help="주석자 A (기본: 라벨을 많이 단 사람)")
     ap.add_argument("--b", help="주석자 B")
     ap.add_argument("--category", help="이 카테고리만 본다 (예: jumpscare)")
-    ap.add_argument("--tol", type=float, default=TOL, help=f"onset 허용오차 (기본 {TOL}초)")
+    ap.add_argument("--tol", type=float, default=TOL,
+                    help=f"onset 허용오차 (기본 {TOL}초 — 보고값은 고정, 바꾸면 민감도 확인)")
     ap.add_argument("--slice-s", type=float, default=SLICE_S,
                     help=f"시간 구간 폭 (기본 {SLICE_S}초)")
     ap.add_argument("--selftest", action="store_true")
