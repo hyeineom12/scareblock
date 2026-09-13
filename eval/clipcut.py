@@ -78,7 +78,8 @@ def parse_candidates(path: Path) -> list[Candidate]:
 
 def probe(url: str) -> tuple[str, float]:
     """영상 ID와 길이(초)를 읽는다. 내려받지 않는다."""
-    r = subprocess.run(["yt-dlp", "--no-warnings", "--print", "%(id)s\t%(duration)s", url],
+    # --no-playlist — 복사한 링크에 &list=가 붙어도 그 영상 하나만 본다(#24 리뷰 🟡)
+    r = subprocess.run(["yt-dlp", "--no-warnings", "--no-playlist", "--print", "%(id)s\t%(duration)s", url],
                        capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"길이를 읽지 못했다 — {url}\n{r.stderr.strip()[:300]}")
@@ -95,8 +96,18 @@ def draw_offsets(duration: float, n: int, rng: random.Random,
     앞뒤 `margin_s`를 비우는 것은 **사건 기준이 아니라 구조 기준**이다 —
     인트로 타이틀과 엔딩 크레딧은 어느 영상에나 있고 내용이 없다.
     """
+    # **원본이 클립 길이보다 짧거나 비슷하면 통째로 쓴다.** §4는 「5분 이내」이므로
+    # 3분짜리 단편을 통째로 쓰는 것이 규칙에 맞고, 자를 지점을 고를 일이 없어
+    # 표집 편향이 0이 된다. 단편은 클라이맥스가 끝에 있어 창을 뽑으면 놓치기 쉽다.
+    if duration <= clip_s:
+        return [0.0]
     lo, hi = margin_s, duration - margin_s - clip_s
-    if hi <= lo:                      # 여유가 없으면 마진을 포기하고 중앙에서 뽑는다
+    if hi <= lo:
+        # 여유가 모자라면 마진을 **비례해서** 줄인다. 0으로 떨구면 인트로 타이틀을 피하려던
+        # 목적이 그 경우에만 통째로 사라진다(#24 리뷰 🟢). 남는 여유의 1/4씩만 앞뒤로 비운다.
+        m = (duration - clip_s) / 4
+        lo, hi = m, duration - m - clip_s
+    if hi <= lo:
         lo, hi = 0.0, duration - clip_s
     if hi <= lo:
         return []
@@ -110,6 +121,23 @@ def draw_offsets(duration: float, n: int, rng: random.Random,
     return sorted(round(t, 2) for t in picked)
 
 
+def _pick_media(stem: Path) -> Path | None:
+    """`cut()`과 `--manifest-only`가 **같은 규칙으로** 파일을 고른다(#24 리뷰 🟡1).
+
+    yt-dlp가 병합에 실패하거나 끊기면 `c001.f137.mp4` 같은 포맷 조각이 남는다. 알파벳
+    순으로는 조각이 먼저라 조용히 틀린 파일을 집는다. 조각을 거르고 가장 최근 것을 쓴다.
+    """
+    got = [q for q in stem.parent.glob(f"{stem.name}.*")
+           if q.suffix.lower() in MEDIA_EXT and "." not in q.name[len(stem.name) + 1:]]
+    return max(got, key=lambda q: q.stat().st_mtime) if got else None
+
+
+def canonical_url(vid: str) -> str:
+    """명세의 `url` 열에는 실제 URL을 쓴다 — §7 공개 방침의 「URL」이 이 열이다.
+    후보 목록에 영상 ID만 적었거나 `&list=`가 붙어 있어도 같은 모양으로 맞춘다."""
+    return f"https://www.youtube.com/watch?v={vid}"
+
+
 def cut(url: str, offset: float, clip_s: float, stem: Path, exact: bool = False) -> Path:
     """해당 구간만 내려받는다. 원본 전체를 받지 않는다 (§7 로컬 분석 전용).
 
@@ -121,8 +149,9 @@ def cut(url: str, offset: float, clip_s: float, stem: Path, exact: bool = False)
     오프셋은 무작위라 경계 정밀도가 필요하지 않으므로 기본은 끈다.
     """
     stem.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["yt-dlp", "--no-warnings", "-f", FMT, "--merge-output-format", "mp4",
-           "--download-sections", f"*{offset}-{offset + clip_s}"]
+    cmd = ["yt-dlp", "--no-warnings", "--no-playlist", "-f", FMT, "--merge-output-format", "mp4"]
+    if clip_s > 0:
+        cmd += ["--download-sections", f"*{offset}-{offset + clip_s}"]
     if exact:
         cmd.append("--force-keyframes-at-cuts")
     cmd += ["-o", f"{stem}.%(ext)s", url]
@@ -133,12 +162,11 @@ def cut(url: str, offset: float, clip_s: float, stem: Path, exact: bool = False)
     # 알파벳 순으로는 f137이 mp4보다 앞이라 조각이 먼저 잡히고, 그러면 조용히
     # 틀린 파일로 wav를 뽑는다 (#24 리뷰 🟡4). 확장자를 아는 것으로 한정하고
     # 그 중 가장 최근 것을 집는다.
-    got = [q for q in stem.parent.glob(f"{stem.name}.*")
-           if q.suffix.lower() in MEDIA_EXT and "." not in q.name[len(stem.name) + 1:]]
-    if not got:
+    got = _pick_media(stem)
+    if got is None:
         raise RuntimeError(f"절단은 됐다는데 쓸 수 있는 파일이 없다 — {stem}.* "
                            f"(남은 것: {sorted(q.name for q in stem.parent.glob(f'{stem.name}.*'))})")
-    return max(got, key=lambda q: q.stat().st_mtime)
+    return got
 
 
 def to_wav(src: Path, dest: Path, sr: int = WAV_SR) -> None:
@@ -186,6 +214,16 @@ def main() -> int:
     a = ap.parse_args()
 
     out = Path(a.out)
+
+    # 이전 명세의 원본 길이 — 재현 도구로 쓸 때 「그때와 같은 원본인가」를 대조한다(#24 리뷰 ②)
+    old_dur: dict[str, float] = {}
+    if (out / MANIFEST).exists():
+        with open(out / MANIFEST, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                try:
+                    old_dur[r["clip_id"]] = float(r.get("video_duration_s") or 0)
+                except (KeyError, ValueError):
+                    pass
     cands = parse_candidates(Path(a.candidates))
     if not cands:
         print("후보가 없다", file=sys.stderr)
@@ -199,8 +237,11 @@ def main() -> int:
         try:
             vid, dur = probe(c.url)
         except RuntimeError as e:
-            print(f"건너뜀 — {e}", file=sys.stderr)
+            # 길이를 못 읽어도 **요청한 개수만큼 번호를 비워둔다.** 안 비우면 뒤 후보의 clip_id가
+            # 전부 당겨지고, clip_id는 라벨·ELAN 파일과의 유일한 조인 키다(#24 리뷰 🔴②)
+            print(f"건너뜀 — {e} · 번호 {c.n_clips}개를 비워둔다", file=sys.stderr)
             failed.append(c.url)
+            idx += c.n_clips
             continue
 
         # 씨앗을 영상 ID에 묶는다. 후보 목록의 순서가 바뀌어도 같은 오프셋이 나온다
@@ -215,6 +256,8 @@ def main() -> int:
             print(f"알림 — {vid}에서 {c.n_clips}개 요청, {len(offsets)}개만 가능", file=sys.stderr)
 
         for off in offsets:
+            # 번호는 받기 **전에** 소비한다 — 내려받기가 실패해도 뒤 클립 번호가 밀리지 않는다.
+            # 결과적으로 clip_id는 candidates.txt(순서·개수) + 씨앗 + 원본 길이의 함수다
             clip_id = f"c{idx:03d}"
             idx += 1
             stem = out / "video" / clip_id
@@ -224,17 +267,33 @@ def main() -> int:
             if a.manifest_only:
                 # 이미 받아둔 파일에서 실제 길이를 읽는다. 씨앗이 같으면 오프셋도
                 # 같으므로, 명세만 다시 써도 같은 클립을 가리킨다.
-                have = [q for q in stem.parent.glob(f"{stem.name}.*")
-                        if q.suffix.lower() in MEDIA_EXT
-                        and "." not in q.name[len(stem.name) + 1:]]
-                if not have:
+                media = _pick_media(stem)
+                if media is None:
                     print(f"  건너뜀 — 받아둔 파일이 없다 ({stem.name})", file=sys.stderr)
                     failed.append(f"{vid}@{off}")
                     continue
-                got = media_duration(have[0])
+                # wav이 없으면 명세에는 있는데 평가에 못 들어가고, 라벨 0건이라 대조 클립으로
+                # 잘못 세진다(#24 리뷰 🟡2) — 명세에 넣지 않는다
+                if not wav.exists():
+                    print(f"  건너뜀 — {wav.name}이 없다. 명세에 넣으면 대조 클립으로 잘못 세진다",
+                          file=sys.stderr)
+                    failed.append(f"{vid}@{off}")
+                    continue
+                got = media_duration(media)
+                # 디스크의 파일이 이 오프셋·길이로 받은 것인지 — 길이로라도 대조한다
+                expect = min(a.clip_s, dur)
+                if abs(got - expect) > 20:
+                    print(f"  경고 — {media.name} 길이 {got:.0f}초가 기대 {expect:.0f}초와 다르다. "
+                          f"다른 --clip-s나 씨앗으로 받은 파일일 수 있다", file=sys.stderr)
+                prev = old_dur.get(clip_id)
+                if prev and abs(prev - dur) > 1.0:
+                    print(f"  경고 — {clip_id} 원본 길이가 명세({prev:.0f}초)와 지금({dur:.0f}초) 다르다. "
+                          f"재업로드·편집이면 같은 씨앗이라도 오프셋이 달라진다", file=sys.stderr)
             elif not a.dry_run:
                 try:
-                    media = cut(c.url, off, a.clip_s, stem, a.exact_cuts)
+                    # 통째로 쓰는 클립(오프셋 0 · 원본이 더 짧음)은 구간 지정 없이 받는다
+                    span = 0.0 if (off == 0.0 and dur <= a.clip_s) else a.clip_s
+                    media = cut(c.url, off, span, stem, a.exact_cuts)
                     to_wav(media, wav)
                     got = media_duration(media)
                 except RuntimeError as e:
@@ -242,7 +301,7 @@ def main() -> int:
                     failed.append(f"{vid}@{off}")
                     continue
             rows.append({"clip_id": clip_id, "video_id": vid, "clip_offset": off,
-                         "duration_s": got, "source_class": c.source_class, "url": c.url,
+                         "duration_s": got, "source_class": c.source_class, "url": canonical_url(vid),
                          "seed": a.seed, "clip_s": a.clip_s, "margin_s": a.margin_s,
                          "video_duration_s": round(dur, 2)})
 
