@@ -78,8 +78,11 @@ def extract(x: np.ndarray, sr: int, hop_s: float = HOP_S, win_s: float = WIN_S) 
 
     rms = np.sqrt((frames ** 2).mean(axis=1)) if n else np.zeros(0, np.float32)
 
-    # 기울기 — 말소리는 천천히, 점프 스케어는 2~100 ms 만에 커진다
-    drms = np.gradient(rms) / hop_s if n > 1 else np.zeros_like(rms)
+    # 기울기 — 말소리는 천천히, 점프 스케어는 2~100 ms 만에 커진다.
+    # **후방차분이어야 한다.** np.gradient는 중심차분이라 drms[i]가 rms[i+1]에
+    # 의존하는데, 확신 시각은 t_ready(i)로 적힌다 — 아직 나오지 않은 프레임으로
+    # 확신했다고 기록하는 셈이다 (#19 리뷰 🟡3). 창 시작/끝 문제와 같은 종류다.
+    drms = np.diff(rms, prepend=rms[:1]) / hop_s if n else np.zeros_like(rms)
 
     # 스펙트럼 플럭스 (양의 변화만)
     if n:
