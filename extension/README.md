@@ -67,7 +67,7 @@ node extension/test/triggers.test.js     # 7/7 — 커서 조회 = 선형 탐색
 **재생기와 탐지기는 배열 하나로만 만난다.**
 
 ```js
-[{ time: 13.42, category: "jumpscare", confidence: 0.87, duration: 1.2, source: "rule" }]
+[{ time: 13.42, category: "jumpscare", confidence: 0.87, duration: 1.5, source: "rule" }]  // 순간 사건 + 꼬리 1.5초 — 정의는 README 인터페이스 계약
 ```
 
 `time`은 **라이브 mediaTime**이다. 화면은 그보다 `DELAY_SEC` 뒤를 보여주므로,

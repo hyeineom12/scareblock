@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CATEGORIES = {"jumpscare", "blood", "syringe", "spider", "siren"}
-MERGE_GAP = 1.5  # §2 — 앞 offset에서 이 시간 안에 다음 onset이 오면 1건
+MERGE_GAP = 1.5  # §2 — README 인터페이스 계약의 블러 꼬리와 같은 값. 바꾸면 계약·§2·제3자 §5도 함께
 
 
 @dataclass

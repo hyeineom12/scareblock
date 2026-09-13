@@ -173,11 +173,15 @@ THUMOS'14 기준 mAP 13.8% 향상을 보고했다[1]. 유효성이 보고된 구
 
 ```javascript
 [
-  { time: 13.42, category: "jumpscare", confidence: 0.87, duration: 1.2, source: "rule" },
-  { time: 48.10, category: "siren",     confidence: 0.64, duration: 3.5, source: "yamnet" },
-  { time: 91.20, category: "blood",     confidence: 0.71, duration: 2.0, source: "clip-zeroshot" }
+  { time: 13.42, category: "jumpscare", confidence: 0.87, duration: 1.5, source: "rule" },          // 순간 사건 + 꼬리 1.5초
+  { time: 48.10, category: "siren",     confidence: 0.64, duration: 3.5, source: "yamnet" },        // 사이렌 2.0초 + 꼬리 1.5초
+  { time: 91.20, category: "blood",     confidence: 0.71, duration: 2.0, source: "clip-zeroshot" }  // 유혈 0.5초 + 꼬리 1.5초
 ]
 ```
+
+> **09.10 이후 변경** — `duration`을 **사건이 끝난 뒤 블러가 더 덮는 꼬리 1.5초**로 정의했다. 순간 사건은 `1.5`,
+> 지속 사건은 `길이 + 1.5`다. 제출본 예시의 점프 스케어 `1.2`는 꼬리가 라벨 병합 창(1.5초)보다 짧아
+> 「라벨 1건 · 개입 두 번」이 되므로 `1.5`로 고쳤다. 정의의 원본은 README 「인터페이스 계약」이다.
 
 `source`에 탐지 주체를 기록해 카테고리별·모델별 성능표 집계에 쓴다.
 
