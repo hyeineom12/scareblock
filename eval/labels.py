@@ -82,9 +82,13 @@ def load_clips(path: str | Path) -> list[str]:
     `clip_id` 열만 요구하고 나머지는 무시한다 — 명세가 열을 늘려도 안 깨진다.
     """
     with open(path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    if not rows or "clip_id" not in (rows[0].keys() if rows else {}):
-        raise ValueError(f"{path}: clip_id 열이 없다")
+        reader = csv.DictReader(f)
+        if "clip_id" not in (reader.fieldnames or []):
+            raise ValueError(f"{path}: clip_id 열이 없다")
+        rows = list(reader)
+    # 헤더만 있는 파일은 열이 없는 게 아니라 클립이 0개다 — 메시지를 가른다 (#26 리뷰 🟢5)
+    if not rows:
+        raise ValueError(f"{path}: 클립이 0개다 — 헤더만 있다")
     out, seen = [], set()
     for i, r in enumerate(rows, start=2):
         cid = (r.get("clip_id") or "").strip()
@@ -139,12 +143,17 @@ def validate(labels: list[Label]) -> list[str]:
         # 하한이 0이면 **겹치거나 완전히 똑같은 두 행이 검사를 그냥 통과한다**
         # (#19 리뷰 🟡4). 음수 간격은 병합이 아니라 별개의 오류다.
         if gap < 0:
-            same = (a.onset, a.offset) == (b.onset, b.offset)
-            problems.append(
-                f"{a.clip_id}: {a.onset:.2f}와 {b.onset:.2f}가 "
-                + ("완전히 같은 구간이다 — 중복 행" if same
-                   else f"{-gap:.2f}s 겹친다 — §2는 겹침을 허용하지 않는다")
-            )
+            # -gap이 실제 겹침인 것은 b가 a 끝을 넘어갈 때뿐이다. b가 a 안에 들어가면
+            # -gap은 a의 남은 길이라 겹침을 과장한다 (#26 리뷰 🟢6).
+            if (a.onset, a.offset) == (b.onset, b.offset):
+                msg = f"{a.onset:.2f}–{a.offset:.2f}가 두 번 있다 — 중복 행"
+            elif b.offset <= a.offset:
+                msg = (f"{a.onset:.2f}–{a.offset:.2f} 구간이 {b.onset:.2f}–{b.offset:.2f}를 "
+                       f"포함한다 — §2는 겹침을 허용하지 않는다")
+            else:
+                msg = (f"{a.onset:.2f}–{a.offset:.2f}와 {b.onset:.2f}–{b.offset:.2f}가 "
+                       f"{-gap:.2f}s 겹친다 — §2는 겹침을 허용하지 않는다")
+            problems.append(f"{a.clip_id}: {msg}")
         elif gap < MERGE_GAP:
             problems.append(
                 f"{a.clip_id}: {a.onset:.2f}와 {b.onset:.2f}가 {gap:.2f}s 간격 — "

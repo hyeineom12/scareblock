@@ -46,16 +46,46 @@ def analyse(clip_audio: dict[str, Path], truth: list[L.Label], params: Params,
     return rows, detections_per_minute(all_det, total_s), total_s
 
 
+def evaluation_set(truth: list[L.Label], clip_ids: list[str], audio: dict[str, Path]):
+    """실제로 평가할 집합을 정한다. (라벨, 클립별 wav, 명세 밖 라벨 clip_id, wav 없는 clip_id,
+    명세 밖 wav) 를 돌려준다.
+
+    분모는 **명세 ∩ wav**다. 대조 비율도 이 집합으로 계산해야 출력된 표의 precision을
+    방어한다 — 명세 전체로 재면 유일한 대조 클립의 wav가 없을 때 경고가 침묵한다
+    (#26 재리뷰 🟡2).
+
+    **명세 밖 clip_id의 라벨은 알리고 뺀다.** analyse가 wav 기준으로 라벨을 거르므로
+    조용히 두면 참 사건이 분모에서 사라져 recall이 부풀고, by_clip이 그 clip_id를
+    대조 비율 분모에 넣어 30% 게이트까지 뒤집는다 (#26 재리뷰 🔴1). 분모를 라벨에서
+    역산하지 말라는 🔴1의 거울쪽이다.
+    """
+    spec = set(clip_ids)
+    stray = sorted({x.clip_id for x in truth} - spec)
+    missing = sorted(spec - set(audio))
+    extra = sorted(set(audio) - spec)
+    used = {k: v for k, v in audio.items() if k in spec}
+    kept = [x for x in truth if x.clip_id in used]
+    return kept, used, stray, missing, extra
+
+
 def render(rows, per_min: float, total_s: float,
-           n_used: int | None = None, n_expected: int | None = None) -> str:
+           n_used: int | None = None, n_expected: int | None = None,
+           annotator: str | None = None, has_spec: bool = True) -> str:
     head = ""
-    # 클립 수를 **표 안에** 넣는다. wav 하나가 없어도 경고는 stderr로 가고 표는
-    # 그대로 나오므로, 25개 결과를 26개라고 믿고 논문에 옮기게 된다 (#26 리뷰 🟡2).
-    # 표를 옮길 때 같이 따라가는 자리에 있어야 한다.
+    # 표를 옮길 때 같이 따라가는 자리에 **이 표의 성격**을 둔다. 경고는 stderr로 가고
+    # 표만 논문에 옮겨지므로, 누구 라벨인지·클립이 다 들어갔는지·명세가 있었는지가
+    # 머리줄에 없으면 사라진다 (#26 리뷰 🟡2 · 재리뷰 🟡3·🟡4).
+    if annotator:
+        head += f"주석자 {annotator} · "
     if n_expected is not None:
-        head = f"클립 {n_used}/{n_expected}개"
-        if n_used != n_expected:
-            head += " ⚠️ 명세보다 적다"
+        if not has_spec:
+            # 폴백은 wav 목록이 곧 분모라 n_used == n_expected가 항상 성립한다.
+            # 비교가 무의미하므로 명세가 없었다는 사실 자체를 적는다.
+            head += f"클립 {n_used}개 (명세 없음)"
+        else:
+            head += f"클립 {n_used}/{n_expected}개"
+            if n_used != n_expected:
+                head += " ⚠️ 명세보다 적다"
         head += " · "
     head += (f"평가 구간 {total_s / 60:.1f}분 · 참 사건 {rows[0].n_true}건 · "
              f"탐지 {rows[0].n_pred}건 ({per_min:.1f}건/분)")
@@ -179,8 +209,46 @@ def _selftest() -> int:
                                      n_used=len(specs), n_expected=len(specs))
         print(f"클립 수 표기: {short.splitlines()[0].split(' · ')[0]}")
 
+        # 재리뷰 🔴1·🟡2 회귀 — 명세 밖 라벨은 빠지고 알려지며, 대조 비율은 평가 집합 기준이다
+        typo = truth + [L.Label("synth", "c999", 0.0, 3.0, 3.6, "jumpscare",
+                                annotator="synthetic")]
+        kept, used_x, stray, _, _ = evaluation_set(typo, list(specs), clip_audio)
+        no_c003 = {k: v for k, v in clip_audio.items() if k != "c003"}
+        _, used_y, _, missing_y, _ = evaluation_set(truth, list(specs), no_c003)
+        ratio_y = L.control_ratio(L.by_clip(truth, list(used_y)))
+        mirror_ok = (stray == ["c999"] and all(x.clip_id != "c999" for x in kept)
+                     and L.control_ratio(L.by_clip(kept, list(used_x))) == len(CONTROL) / len(specs)
+                     and missing_y == ["c003"] and ratio_y == 0.0)
+        print(f"명세 밖 라벨: {stray} 제외 · 대조 클립 wav 없을 때 평가 집합 비율 {ratio_y:.0%}")
+
+        # 🟡3·🟡4 — 머리줄에 주석자와 명세 유무가 남는다
+        nospec = render(rows, per_min, total, n_used=3, n_expected=3, has_spec=False)
+        withwho = render(rows, per_min, total, n_used=3, n_expected=3, annotator="B")
+        head2_ok = ("명세 없음" in nospec.splitlines()[0]
+                    and withwho.splitlines()[0].startswith("주석자 B · 클립 3/3개"))
+
+        # 🟢5 — 명세 파서의 세 갈래
+        def _raises(body, needle):
+            pth = tmpdir / "spec.csv"
+            pth.write_text(body, encoding="utf-8")
+            try:
+                L.load_clips(pth)
+            except ValueError as e:
+                return needle in str(e)
+            return False
+        good = tmpdir / "good.csv"
+        good.write_text("clip_id,video_id\nc001,v\nc002,v\n", encoding="utf-8")
+        parser_ok = (L.load_clips(good) == ["c001", "c002"]
+                     and _raises("video_id\nv\n", "열이 없다")
+                     and _raises("clip_id\n", "0개")
+                     and _raises("clip_id\nc001\nc001\n", "두 번"))
+        print(f"명세 파서: 정상·열 없음·빈 명세·중복 {'통과' if parser_ok else '실패'}")
+
         ok = (
-            head_ok
+            mirror_ok
+            and head2_ok
+            and parser_ok
+            and head_ok
             and rows[-1].recall >= 2 / 3
             and rows[0].timeliness < rows[-1].timeliness
             and no_cross
@@ -252,25 +320,29 @@ def main() -> int:
               f"**평가에 쓸 값이 아니다** — κ 계산용이면 --annotator를 빼라",
               file=sys.stderr)
 
-    clips = L.by_clip(truth, clip_ids)
+    truth, used, stray, missing, extra = evaluation_set(truth, clip_ids, audio)
+    if stray:
+        print(f"경고: 명세에 없는 클립의 라벨 {stray} — 평가에서 뺀다 "
+              f"(clip_id 오타면 참 사건이 사라져 recall이 부푼다)", file=sys.stderr)
+    if missing:
+        print(f"경고: wav 없는 클립 {missing}", file=sys.stderr)
+    if extra:
+        print(f"경고: 명세에 없는 wav {extra} — 평가에서 뺀다", file=sys.stderr)
+
+    # 대조 비율은 **실제로 평가된 집합**으로 잰다 — 30% 기준이 지키려는 것은 출력된 표다
+    clips = L.by_clip(truth, list(used))
     ratio = L.control_ratio(clips)
     if ratio < 0.30:
         print(f"경고: 대조 클립 비율 {ratio:.0%} ({sum(c.is_control for c in clips.values())}"
-              f"/{len(clips)}) — §4 기준 30% 미만이라 정밀도 수치를 방어할 수 없다",
-              file=sys.stderr)
+              f"/{len(clips)}, 평가된 클립 기준) — §4 기준 30% 미만이라 "
+              f"정밀도 수치를 방어할 수 없다", file=sys.stderr)
 
-    missing = set(clip_ids) - set(audio)
-    if missing:
-        print(f"경고: wav 없는 클립 {sorted(missing)}", file=sys.stderr)
-    extra = set(audio) - set(clip_ids)
-    if extra:
-        print(f"경고: 명세에 없는 wav {sorted(extra)} — 평가에서 뺀다", file=sys.stderr)
-
-    used = {k: v for k, v in audio.items() if k in set(clip_ids)}
+    shown = pick if pick is not None else (who[0] if len(who) == 1 and who[0] else None)
     rows, per_min, total = analyse(
         used, truth, Params(drms_min=a.drms_min), render_s=a.render_s,
     )
-    print(render(rows, per_min, total, n_used=len(used), n_expected=len(clip_ids)))
+    print(render(rows, per_min, total, n_used=len(used), n_expected=len(clip_ids),
+                 annotator=shown, has_spec=bool(a.clips)))
     return 0
 
 
