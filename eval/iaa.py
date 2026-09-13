@@ -462,10 +462,12 @@ def _selftest() -> int:
     checks["--tol을 바꾸면 민감도 경고"] = "허용오차 ±5초" in txt13 and "허용오차" not in txt[txt.find("보고 —"):]
 
     # ⑭ #32 재리뷰 🟡 — 건수 줄은 both만 세고, 명세 밖 라벨은 알린다
-    txt14, _ = report(z + [_lab("c777", 5, 6, "B")], "A", "B", dur5,
+    # 명세 밖 라벨을 **양쪽 모두에** 둔다 — 한쪽에만 두면 다른 쪽 좁히기를 지워도 점검이 통과한다(자가 검사)
+    txt14, _ = report(z + [_lab("c777", 5, 6, "B"), _lab("c888", 7, 8, "A")], "A", "B", dur5,
                       reviewed_a={"c001", "c005"}, reviewed_b={"c001", "c005"})
     checks["건수는 이중 라벨링 클립만 · 명세 밖 라벨은 알린다"] = (
-        "B 1건" in txt14 and "명세에 없는 클립의 라벨 1건(c777)" in txt14)
+        "A 2건" in txt14 and "B 1건" in txt14
+        and "명세에 없는 클립의 라벨 2건(c777, c888)" in txt14)
 
     print("=" * 68)
     print(txt4)
