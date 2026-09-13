@@ -103,17 +103,84 @@ def label_order(clip_ids: list[str], seed: int) -> list[str]:
     return order
 
 
+def make_all(ids: list[str], vdir: Path, wdir: Path, out: Path,
+             force: bool = False) -> tuple[int, list[str], list[str]]:
+    """클립마다 .eaf를 쓴다. (만든 수, 이미 있어 건너뛴 것, 영상이 없는 것)."""
+    made, skipped, missing = 0, [], []
+    for cid in ids:
+        video = vdir / f"{cid}.mp4"
+        wav = wdir / f"{cid}.wav"
+        if not video.exists():
+            missing.append(cid)
+            continue
+        dest = out / f"{cid}.eaf"
+        if dest.exists() and not force:
+            skipped.append(cid)
+            continue
+        write_eaf(build_eaf(video, wav if wav.exists() else None, out), dest)
+        if not wav.exists():
+            print(f"경고: {cid}.wav이 없다 — 파형 없이 열린다", file=sys.stderr)
+        made += 1
+    return made, skipped, missing
+
+
+def _selftest() -> int:
+    """생성물을 XML로 읽어 구조를 확인한다. ELAN을 띄울 수는 없으므로, 실제로 열린
+    `docs/scareblock.etf`(#22)와 같은 구조인지를 본다."""
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="make-eaf-selftest-"))
+    (tmp / "video").mkdir()
+    (tmp / "wav").mkdir()
+    ids = ["c001", "c002"]
+    for c in ids:
+        (tmp / "video" / f"{c}.mp4").write_bytes(b"")
+    (tmp / "wav" / "c001.wav").write_bytes(b"")        # c002는 wav 없음
+    (tmp / "clips.csv").write_text("clip_id,video_id\nc001,v1\nc002,v2\n", encoding="utf-8")
+    out = tmp / "elan"
+
+    made, _, missing = make_all(read_clips(tmp / "clips.csv"), tmp / "video", tmp / "wav", out)
+    again = make_all(ids, tmp / "video", tmp / "wav", out)
+    r1 = ET.parse(out / "c001.eaf").getroot()
+    md1 = list(r1.iter("MEDIA_DESCRIPTOR"))
+    md2 = list(ET.parse(out / "c002.eaf").getroot().iter("MEDIA_DESCRIPTOR"))
+    many = [f"c{i:03d}" for i in range(1, 45)]
+    o1, o2, o3 = label_order(many, 20260912), label_order(many, 20260912), label_order(many, 7)
+    checks = {
+        "클립 2개 생성 · 영상 누락 없음": made == 2 and not missing,
+        "이미 있으면 건너뛴다 (찍어둔 라벨 보호)": again[0] == 0 and again[1] == ids,
+        "요소 순서 HEADER → TIME_ORDER → TIER×5 → LINGUISTIC_TYPE":
+            [ch.tag for ch in r1] == ["HEADER", "TIME_ORDER"] + ["TIER"] * 5 + ["LINGUISTIC_TYPE"],
+        "트랙 이름·순서가 scareblock.etf와 같다": [x.get("TIER_ID") for x in r1.iter("TIER")] == TIERS,
+        "wav이 있으면 미디어 2개 + EXTRACTED_FROM":
+            len(md1) == 2 and md1[1].get("MIME_TYPE") == "audio/x-wav"
+            and md1[1].get("EXTRACTED_FROM", "").endswith("c001.mp4"),
+        "wav이 없으면 영상 1개만": len(md2) == 1,
+        "라벨링 순서는 씨앗으로 결정되는 순열": o1 == o2 and sorted(o1) == many and o1 != o3,
+    }
+    for name, ok in checks.items():
+        print(f"  [{'OK' if ok else '실패'}] {name}")
+    allok = all(checks.values())
+    print("\n자체 점검:", "통과" if allok else "실패")
+    return 0 if allok else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="클립마다 ELAN 작업 파일을 미리 만든다")
-    ap.add_argument("--clips", required=True, help="클립 명세 CSV")
-    ap.add_argument("--out", required=True, help=".eaf를 낼 디렉터리")
+    ap.add_argument("--clips", help="클립 명세 CSV")
+    ap.add_argument("--out", help=".eaf를 낼 디렉터리")
     ap.add_argument("--video-dir", help="기본: <clips.csv가 있는 곳>/video")
     ap.add_argument("--wav-dir", help="기본: <clips.csv가 있는 곳>/wav")
     ap.add_argument("--seed", type=int, default=20260912, help="라벨링 순서 씨앗")
     ap.add_argument("--order", action="store_true", help="순서만 내고 파일은 만들지 않는다")
     ap.add_argument("--force", action="store_true",
                     help="이미 있는 .eaf도 덮어쓴다 (찍어둔 라벨이 사라진다)")
+    ap.add_argument("--selftest", action="store_true", help="임시 명세로 .eaf 생성과 순서를 점검")
     a = ap.parse_args()
+
+    if a.selftest:
+        return _selftest()
+    if not (a.clips and a.out):
+        ap.error("--clips 와 --out 이 필요하다 (또는 --selftest)")
 
     clips = Path(a.clips)
     base = clips.parent
@@ -131,21 +198,7 @@ def main() -> int:
             print(f"{i:3d}. {cid}{mark}")
         return 0
 
-    made, skipped, missing = 0, [], []
-    for cid in ids:
-        video = vdir / f"{cid}.mp4"
-        wav = wdir / f"{cid}.wav"
-        if not video.exists():
-            missing.append(cid)
-            continue
-        dest = out / f"{cid}.eaf"
-        if dest.exists() and not a.force:
-            skipped.append(cid)
-            continue
-        write_eaf(build_eaf(video, wav if wav.exists() else None, out), dest)
-        if not wav.exists():
-            print(f"경고: {cid}.wav이 없다 — 파형 없이 열린다", file=sys.stderr)
-        made += 1
+    made, skipped, missing = make_all(ids, vdir, wdir, out, a.force)
 
     print(f".eaf {made}개 → {out}")
     if skipped:

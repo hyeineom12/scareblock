@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .labels import CATEGORIES, validate
+from .labels import CATEGORIES, Label, validate
 from .labels import load as load_labels
 
 # §1 스키마. **`duration`은 넣지 않는다** — `offset − onset`으로 계산한다.
@@ -130,7 +130,8 @@ def _tier_name(cell: str) -> str | None:
     return None
 
 
-def parse_export(path: Path, clip_id: str) -> tuple[list[Row], list[str]]:
+def parse_export(path: Path, clip_id: str,
+                 clip_dur: float | None = None) -> tuple[list[Row], list[str]]:
     """탭 구분 텍스트 한 개를 읽는다. (행 목록, 알림 목록)을 돌려준다.
 
     **열 위치를 고정하지 않는다.** ELAN 대화상자에서 무엇을 고르느냐에 따라
@@ -183,10 +184,9 @@ def parse_export(path: Path, clip_id: str) -> tuple[list[Row], list[str]]:
                     f"프레임률을 알아야 초로 바꿀 수 있다 — 내보내기에서 초 단위(ss.msec)나 "
                     f"hh:mm:ss.ms를 함께 켜서 다시 내보내라 (elan-setup.md §5)")
             raise ConvertError(f"{path.name}:{ln} 시작·끝 시각을 찾지 못했다 — {cells}")
-        if use == "int":
-            ints_only = True
-        else:
-            ints_only = False
+        # 파일 전체가 정수일 때만 밀리초 후보다. 줄마다 덮어쓰면 마지막 줄이 파일 전체의
+        # 단위를 정한다(#27 리뷰 🟡9)
+        ints_only = ints_only and use == "int"
 
         picked = by_kind[use]
         onset, offset = picked[0][1], picked[1][1]
@@ -202,18 +202,32 @@ def parse_export(path: Path, clip_id: str) -> tuple[list[Row], list[str]]:
                      if i > last_time_at and c.strip() and not _looks_like_path(c)), "")
         parsed.append((tier, onset, offset, text))
 
-    # 단위 — 정수만 나오고 값이 너무 크면 밀리초다
+    # 단위 — **클립 길이를 알면 그것으로 판정한다.** 5분 클립에 onset 2500초는 그 자체로
+    # 불가능하다. 3600초 상한만 쓰면 사건이 전부 앞 3.6초 안인 밀리초 파일이 조용히
+    # 1000배 틀린다(#27 리뷰 🔴1). 길이를 모를 때만 3600초 휴리스틱으로 떨어진다.
     scale = 1.0
-    if parsed and ints_only:
+    limit = (clip_dur + 1.0) if clip_dur else MAX_PLAUSIBLE_S
+    if parsed:
         biggest = max(max(on, off) for _, on, off, _ in parsed)
-        if biggest > MAX_PLAUSIBLE_S:
-            scale = 1e-3
-            notes.append(f"{path.name}: 시간이 정수이고 최대 {biggest:.0f}이라 "
-                         f"밀리초로 읽었다 — 초로 내보내는 게 규약이다 (elan-setup §5)")
+        if biggest > limit:
+            if ints_only and biggest * 1e-3 <= limit:
+                scale = 1e-3
+                basis = f"클립 길이 {clip_dur:.0f}초" if clip_dur else f"상한 {MAX_PLAUSIBLE_S:.0f}초"
+                notes.append(f"{path.name}: 시간이 정수이고 최대 {biggest:.0f}이라 {basis}를 넘어 "
+                             f"밀리초로 읽었다 — 초로 내보내는 게 규약이다 (elan-setup §5)")
+            elif clip_dur:
+                raise ConvertError(
+                    f"{path.name}: 사건 시각 {biggest:.2f}가 클립 길이 {clip_dur:.0f}초를 넘는다 — "
+                    f"다른 클립의 파일이거나 시간 형식이 섞였다")
 
     rows: list[Row] = []
     for tier, onset, offset, text in parsed:
         amb, note = parse_label_text(text)
+        # 규약은 「?」를 맨 앞에 쓰는 것이다. 뒤에 붙인 것은 조용히 넘기지 않고 알린다 —
+        # 가장 어기기 쉬운 사람이 처음 쓰는 제3자다(#27 리뷰 🟡10)
+        if not amb and (text or "").strip().endswith(("?", "？")):
+            notes.append(f"{path.name}: 라벨 텍스트 '{text.strip()}' 끝의 '?'는 ambiguous로 "
+                         f"읽지 않았다 — '?'는 맨 앞에 쓴다 (elan-setup §4)")
         rows.append(Row(clip_id=clip_id, category=tier,
                         onset=round(onset * scale, 3), offset=round(offset * scale, 3),
                         ambiguous=amb, note=note))
@@ -243,6 +257,21 @@ def load_manifest(path: Path) -> dict[str, tuple[str, float]]:
     return out
 
 
+def load_durations(path: Path) -> dict[str, float]:
+    """`clips.csv`의 `duration_s`(실측 클립 길이) — 단위 판정에 쓴다."""
+    out: dict[str, float] = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            cid = (r.get("clip_id") or "").strip()
+            try:
+                d = float(r.get("duration_s") or 0)
+            except ValueError:
+                d = 0.0
+            if cid and d > 0:
+                out[cid] = d
+    return out
+
+
 def clip_id_of(path: Path) -> str:
     """파일 이름에서 clip_id를 읽는다. `c007_export.txt` → `c007`."""
     stem = path.stem
@@ -265,7 +294,8 @@ def resolve_clip_id(stem: str, known: list[str]) -> str | None:
 
 
 def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
-            annotator: str) -> tuple[list[dict], list[str], list[str]]:
+            annotator: str,
+            durations: dict[str, float] | None = None) -> tuple[list[dict], list[str], list[str]]:
     """(라벨 행, 알림, **검토한 clip_id 목록**).
 
     세 번째가 중요하다. **사건 0건인 대조 클립은 라벨 행을 남기지 않으므로**,
@@ -275,10 +305,9 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
     rows: list[dict] = []
     notes: list[str] = []
     seen: list[str] = []
+    src: dict[str, str] = {}
     for p in sorted(paths):
         cid = clip_id_of(p)
-        got, n = parse_export(p, cid)
-        notes += n
         vid, off = ("", 0.0)
         if manifest is not None:
             hit = resolve_clip_id(cid, sorted(manifest))
@@ -290,6 +319,14 @@ def convert(paths: list[Path], manifest: dict[str, tuple[str, float]] | None,
                 notes.append(f"{p.name}: 이름에서 clip_id '{hit}'를 읽었다")
                 cid = hit
             vid, off = manifest[cid]
+        # 같은 클립을 가리키는 파일이 둘이면 사건이 두 번 세진다(#27 리뷰 🟡8). 다시 내보내면
+        # c001.txt와 c001_s.txt가 함께 남는 일이 실제로 있다
+        if cid in src:
+            raise ConvertError(f"{p.name}와 {src[cid]}가 둘 다 clip_id '{cid}'를 가리킨다 — "
+                               f"같은 사건이 두 번 세진다. 하나를 지우고 다시 돌려라")
+        src[cid] = p.name
+        got, n = parse_export(p, cid, (durations or {}).get(cid))
+        notes += n
         seen.append(cid)
         if not got:
             notes.append(f"{p.name}: 사건 0건 — 대조 클립이면 정상이다")
@@ -352,10 +389,10 @@ def _selftest() -> int:
     for name, body in SELFTEST_CASES.items():
         (tmp / name).write_text(body, encoding="utf-8")
     man = tmp / "clips.csv"
-    man.write_text("clip_id,video_id,clip_offset\n"
-                   "c001,aqz-KE-bpKQ,742.0\nc002,vid2,10.5\nc003,vid3,0\nc004,vid4,300\n")
+    man.write_text("clip_id,video_id,clip_offset,duration_s\n"
+                   "c001,aqz-KE-bpKQ,742.0,300\nc002,vid2,10.5,300\nc003,vid3,0,300\nc004,vid4,300,300\n")
 
-    rows, notes, seen = convert(sorted(tmp.glob("c0*.txt")), load_manifest(man), "B")
+    rows, notes, seen = convert(sorted(tmp.glob("c0*.txt")), load_manifest(man), "B", load_durations(man))
     out = tmp / "labels.csv"
     write_csv(out, rows)
 
@@ -387,6 +424,41 @@ def _selftest() -> int:
         "파일 이름의 _export가 떨어졌다": any(r["clip_id"] == "c002" for r in rows),
         "하니스가 이 CSV를 읽는다": len(load_labels(out)) == len(rows),
     }
+    # 🔴1 — 5분 클립을 밀리초로 내보냈고 사건이 앞 3.6초 안에 있다
+    (tmp / "ms").mkdir()
+    (tmp / "ms" / "c003.txt").write_text("jumpscare\t2500\t3100\n", encoding="utf-8")
+    r_dur, _ = parse_export(tmp / "ms" / "c003.txt", "c003", 300.0)
+    r_nodur, _ = parse_export(tmp / "ms" / "c003.txt", "c003", None)
+    checks["클립 길이로 밀리초를 판정한다 (2500 → 2.5초)"] = r_dur[0].onset == 2.5
+    checks["길이를 모를 때만 3600초 상한으로 떨어진다"] = r_nodur[0].onset == 2500.0
+    # 🟡8 — 같은 클립을 가리키는 파일 둘
+    (tmp / "dup").mkdir()
+    for nm in ("c001.txt", "c001_s.txt"):
+        (tmp / "dup" / nm).write_text("jumpscare\t5.0\t5.6\n", encoding="utf-8")
+    try:
+        convert(sorted((tmp / "dup").glob("*.txt")), load_manifest(man), "B", load_durations(man))
+        dup_raised = False
+    except ConvertError:
+        dup_raised = True
+    checks["같은 클립 파일이 둘이면 멈춘다"] = dup_raised
+    # 🟡9 — 줄 순서를 뒤집어도 판정이 같다(형식이 섞이면 둘 다 멈춘다)
+    def _raises(body: str) -> bool:
+        f = tmp / "mix.txt"
+        f.write_text(body, encoding="utf-8")
+        try:
+            parse_export(f, "c003", 300.0)
+            return False
+        except ConvertError:
+            return True
+    checks["줄 순서와 무관한 단위 판정"] = (
+        _raises("siren\t90000\t96000\njumpscare\t00:00:15.000\t00:00:15.700\n")
+        and _raises("jumpscare\t00:00:15.000\t00:00:15.700\nsiren\t90000\t96000\n"))
+    # 🟡10 — 뒤에 붙은 ?
+    (tmp / "tq").mkdir()
+    (tmp / "tq" / "c001.txt").write_text("blood\t1.0\t2.0\t케첩인지?\n", encoding="utf-8")
+    _, tq_notes = parse_export(tmp / "tq" / "c001.txt", "c001", 300.0)
+    checks["뒤에 붙은 ?를 알린다"] = any("끝의 '?'" in n for n in tq_notes)
+
     if got != want:
         print("  기대에 없는 것:", sorted(got - want))
         print("  빠진 것:", sorted(want - got))
@@ -433,14 +505,16 @@ def main() -> int:
         return 1
 
     manifest = None
+    durations = None
     if a.clips:
         manifest = load_manifest(Path(a.clips))
+        durations = load_durations(Path(a.clips))
     else:
         print("경고: --clips가 없어 video_id와 clip_offset이 빈 값이 된다. "
               "§1이 요구하는 열이고 원본과 대조할 유일한 단서다", file=sys.stderr)
 
     try:
-        rows, notes, seen = convert(paths, manifest, a.annotator)
+        rows, notes, seen = convert(paths, manifest, a.annotator, durations)
     except ConvertError as e:
         print(f"변환 실패 — {e}", file=sys.stderr)
         return 1
@@ -457,7 +531,12 @@ def main() -> int:
         w = csv.DictWriter(sys.stdout, fieldnames=FIELDS)
         w.writeheader()
         w.writerows(rows)
-        problems = []
+        # 화면으로만 볼 때도 규약 검사를 한다 — 처음 한 번 확인하는 그때가 제일 필요하다(#27 리뷰 🟡10)
+        problems = validate([Label(video_id=r["video_id"], clip_id=r["clip_id"],
+                                   clip_offset=float(r["clip_offset"]), onset=float(r["onset"]),
+                                   offset=float(r["offset"]), category=r["category"],
+                                   ambiguous=r["ambiguous"] == "true", annotator=r["annotator"],
+                                   note=r["note"]) for r in rows])
 
     if problems:
         print(f"\n규약 위반 {len(problems)}건 — 고치고 다시 내보내라:", file=sys.stderr)
