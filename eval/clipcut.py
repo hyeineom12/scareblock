@@ -205,6 +205,44 @@ def write_manifest(path: Path, rows: list[dict]) -> None:
         w.writerows(rows)
 
 
+def merge_manifest(manifest: Path, rows: list[dict], start_index: int) -> list[dict]:
+    """이번 실행의 행과 기존 명세를 합친 결과를 돌려준다. 파일은 쓰지 않는다.
+
+    **기존 명세에 이번 실행이 안 만든 행이 있으면** 그게 명세가 날아가는 조건이다 —
+    `--start-index`는 그 한 가지 방법일 뿐이다(#24 재리뷰 🟡). 그래서 남는 행은 항상 계산한다.
+
+    - `start_index != 1` — 끝에 더하는 실행이다. 남는 행을 합친다
+    - `start_index == 1`인데 남는 행이 있다 — `--start-index`를 깜빡했거나 후보 목록이 줄었다.
+      덮어쓰기 전에 옛 파일을 `.bak`으로 남기고 크게 알린다. 정상적인 전체 재실행이면 남는 행이
+      없어 조용하다
+    """
+    if not manifest.exists():
+        return rows
+    new_ids = {r["clip_id"] for r in rows}
+    with open(manifest, newline="", encoding="utf-8") as f:
+        keep = [r for r in csv.DictReader(f) if r.get("clip_id") not in new_ids]
+    # DictReader가 낸 값은 전부 문자열이다. 합계를 내는 열은 숫자로 되돌린다 — 안 그러면
+    # 명세를 쓴 **직후** 합계에서 죽어 성공한 실행이 실패로 보인다(#24 재리뷰 🔴)
+    for r in keep:
+        try:
+            r["duration_s"] = float(r.get("duration_s") or 0)
+        except ValueError:
+            r["duration_s"] = 0.0
+    if not keep:
+        return rows
+    if start_index != 1:
+        print(f"알림 — --start-index {start_index}: 기존 명세 {len(keep)}행을 유지하고 "
+              f"{len(rows)}행을 더한다", file=sys.stderr)
+        return sorted(keep + rows, key=lambda r: r["clip_id"])
+    bak = manifest.with_name(manifest.name + ".bak")
+    bak.write_bytes(manifest.read_bytes())
+    print(f"경고 — 기존 명세에 이번 실행이 만들지 않은 행이 {len(keep)}개 있다 "
+          f"({', '.join(sorted(r['clip_id'] for r in keep)[:5])}…). --start-index 없이 돌려서 "
+          f"덮어쓴다 — 끝에 더하려던 거라면 --start-index를 주고 다시 돌려라. 옛 명세는 {bak.name}에 남겼다",
+          file=sys.stderr)
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="무작위 오프셋 클립 절단 (labeling-guide §4)")
     ap.add_argument("--candidates", required=True, help="후보 목록 파일")
@@ -329,16 +367,8 @@ def main() -> int:
     if a.dry_run:
         print(f"\n[dry-run] 클립 {len(rows)}개 계획 — 명세를 쓰지 않았다")
     else:
-        # **--start-index로 끝에 더하는 실행은 기존 명세를 날리면 안 된다.** 이번 실행의 행만 쓰면
-        # 앞 N행이 조용히 사라진다(#24 재리뷰 🟡1). 1이 아니면 이번에 안 만든 기존 행을 합친다.
-        if a.start_index != 1 and manifest.exists():
-            new_ids = {r["clip_id"] for r in rows}
-            with open(manifest, newline="", encoding="utf-8") as f:
-                keep = [r for r in csv.DictReader(f) if r.get("clip_id") not in new_ids]
-            if keep:
-                print(f"알림 — --start-index {a.start_index}: 기존 명세 {len(keep)}행을 유지하고 "
-                      f"{len(rows)}행을 더한다", file=sys.stderr)
-            rows = sorted(keep + rows, key=lambda r: r["clip_id"])
+        # 이번 실행의 행만 쓰면 기존 명세의 나머지가 조용히 사라진다(#24 재리뷰 🟡1·🟡)
+        rows = merge_manifest(manifest, rows, a.start_index)
         write_manifest(manifest, rows)
         print(f"\n클립 {len(rows)}개 · 명세 {manifest}")
     total = sum(r["duration_s"] for r in rows) / 60
