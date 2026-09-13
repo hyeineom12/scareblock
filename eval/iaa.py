@@ -49,6 +49,10 @@ BANDS = [(0.8, "좋음 — 그대로 진행"),
          (0.0, "기준이 모호하다 — 문서를 고치고 다시 라벨링")]
 
 
+def _fmt(v: float) -> str:
+    return "정의 안 됨" if v != v else f"{v:.3f}"
+
+
 def band(k: float) -> str:
     for lo, text in BANDS:
         if k >= lo:
@@ -100,8 +104,8 @@ def match_events(ea: list[Label], eb: list[Label], tol: float = TOL) -> list[Pai
 def cohen_kappa(items: list[tuple[str, str]]) -> tuple[float, float, float]:
     """(κ, 관측 일치 po, 우연 일치 pe). 항목은 (A의 판정, B의 판정) 쌍."""
     n = len(items)
-    if n == 0:
-        return 0.0, 0.0, 0.0
+    if n == 0:                          # 항목이 없으면 일치도 자체가 없다 — 0으로 두면 「모호하다」로 읽힌다
+        return float("nan"), float("nan"), float("nan")
     labels = sorted({v for pair in items for v in pair})
     po = sum(1 for x, y in items if x == y) / n
     pe = 0.0
@@ -152,7 +156,7 @@ def psa(per_clip: dict[str, tuple[list[Label], list[Label], float]],
         inter += len(sa & sb)
         a_tot += len(sa)
         b_tot += len(sb)
-    return 2 * inter / (a_tot + b_tot) if (a_tot + b_tot) else 0.0
+    return 2 * inter / (a_tot + b_tot) if (a_tot + b_tot) else float("nan")   # 둘 다 사건 0 — 정의 안 됨
 
 
 def read_ids(path: Path) -> set[str]:
@@ -213,14 +217,20 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
 
     per_clip: dict[str, tuple[list[Label], list[Label], float]] = {}
     pairs: list[Pair] = []
+    no_dur: list[str] = []
     for cid in both:
         ea = [x for x in la if x.clip_id == cid]
         eb = [x for x in lb if x.clip_id == cid]
         ps = match_events(ea, eb, tol)
         pairs += ps
         dur = durations.get(cid, 0.0)
-        if dur <= 0:                    # 명세에 길이가 없으면 마지막 offset까지로 본다
-            dur = max([e.offset for e in ea + eb] + [1.0])
+        if dur <= 0:
+            if not (ea or eb):
+                # 길이도 사건도 없으면 구간 수를 지어낼 수 없다. 1초로 두면 0건 클립이 구간 10개짜리가
+                # 되어 구간 κ를 왜곡한다(#32 리뷰 🟡) — 구간 계산에서 빼고 알린다
+                no_dur.append(cid)
+                continue
+            dur = max(e.offset for e in ea + eb)   # 명세에 길이가 없으면 마지막 offset까지로 본다
         per_clip[cid] = (ea, eb, dur)
 
     n_match = sum(1 for p in pairs if p.matched)
@@ -239,6 +249,8 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
     # ③ 양성 특정 일치도
     a_psa = psa(per_clip, w)
 
+    if no_dur:
+        out.append(f"  ⚠ 클립 길이를 몰라 구간 계산에서 뺀 사건 0건 클립 {len(no_dur)}개: {', '.join(no_dur)} — --clips를 준다")
     gaps = [p.gap for p in pairs if p.matched]
     out.append("")
     out.append(f"사건 — {who_a} {len(la)}건 · {who_b} {len(lb)}건 · "
@@ -251,17 +263,22 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
     out.append("")
     out.append("| 지표 | 값 | 무엇을 재는가 |")
     out.append("|---|---|---|")
-    k_ev_txt = "정의 안 됨" if k_ev != k_ev else f"{k_ev:.3f}"
-    out.append(f"| **사건 매칭 κ** (§6 절차) | {k_ev_txt} | 매칭된 사건의 카테고리 일치. "
-               f"po={po_ev:.3f} pe={pe_ev:.3f} |")
-    out.append(f"| **시간 구간 κ** ({w*1000:.0f} ms) | {k_sl:.3f} | 구간 {n_sl}개 중 "
-               f"사건 구간 {prev:.1%}. po={po_sl:.3f} pe={pe_sl:.3f} |")
-    out.append(f"| **양성 특정 일치도** | {a_psa:.3f} | 사건 없는 시간의 양과 무관 |")
+    out.append(f"| **사건 매칭 κ** (§6 절차) | {_fmt(k_ev)} | 매칭된 사건의 카테고리 일치. "
+               f"po={_fmt(po_ev)} pe={_fmt(pe_ev)} |")
+    out.append(f"| **시간 구간 κ** ({w*1000:.0f} ms) | {_fmt(k_sl)} | 구간 {n_sl}개 중 "
+               f"사건 구간 {prev:.1%}. po={_fmt(po_sl)} pe={_fmt(pe_sl)} |")
+    out.append(f"| **양성 특정 일치도** | {_fmt(a_psa)} | 사건 없는 시간의 양과 무관 |")
 
     # κ 역설 경고 — 관측 일치가 높은데 κ가 낮으면 지표가 상황에 안 맞는 것이다
     out.append("")
     cats = {c for pair in items for c in pair} - {NONE}   # 「없음」을 뺀 카테고리
-    if k_ev != k_ev:                      # nan — 모든 항목이 같은 판정이다
+    if not items:
+        # 두 사람 모두 사건 0건 — 대조 클립에서 판정이 일치한 것이다. 일치도를 낼 사건이 없을 뿐
+        # 「기준이 모호하다」가 아니다(#32 리뷰 🔴, 🔴3 반영으로 0건 클립이 both에 들어오며 열린 길)
+        out.append("→ **두 사람 모두 사건 0건** — 대조 클립 판정이 일치했다. 사건이 없어 κ·PSA는 "
+                   "정의되지 않는다. 일치도는 사건이 있는 이중 라벨링 클립이 있어야 낼 수 있다")
+        headline = float("nan")
+    elif k_ev != k_ev:                    # nan — 모든 항목이 같은 판정이다
         out.append(f"⚠ **사건 매칭 κ가 정의되지 않는다.** 매칭된 사건 {n_match}건이 "
                    f"전부 같은 카테고리이고 한쪽만 단 사건도 없어, 판정에 분산이 "
                    f"없다(pe={pe_ev:.3f}). 완전 일치인데 κ를 낼 수 없는 경우다.")
@@ -280,7 +297,7 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
     else:
         out.append(f"→ 사건 매칭 κ {k_ev:.3f}: {band(k_ev)}")
         headline = k_ev
-    out.append(f"   보고 — 구간 κ {k_sl:.3f}와 양성 특정 일치도 {a_psa:.3f}를 나란히 싣는다 "
+    out.append(f"   보고 — 구간 κ {_fmt(k_sl)}와 양성 특정 일치도 {_fmt(a_psa)}를 나란히 싣는다 "
                f"(PSA만 유병률에 흔들리지 않는다)")
     if abs(w - SLICE_S) > 1e-9:
         out.append(f"   ⚠ 구간 폭 {w*1000:.0f} ms — 보고값은 {SLICE_S*1000:.0f} ms 고정이고 이 결과는 민감도 확인이다")
@@ -380,6 +397,16 @@ def _selftest() -> int:
     txt8, _ = report(mc, "B", "A", dur)
     checks["카테고리 2종의 혼동은 κ 역설로 처리하지 않는다"] = "κ 역설" not in txt8 and "→ 사건 매칭 κ" in txt8
 
+    # ⑨ #32 리뷰 🔴 — 두 사람 모두 사건 0건인 파일럿이 「모호하다」로 나오면 안 된다
+    txt9, k9 = report([], "A", "B", {"c009": 300.0}, reviewed_a={"c009"}, reviewed_b={"c009"})
+    checks["둘 다 0건이면 「모호하다」가 아니라 일치로 보고"] = (
+        "두 사람 모두 사건 0건" in txt9 and "기준이 모호하다" not in txt9
+        and "정의 안 됨" in txt9 and k9 != k9)
+    # ⑩ #32 리뷰 🟡 — 길이를 모르는 0건 클립을 1초짜리로 지어내지 않는다
+    txt10, _ = report(z, "A", "B", {"c001": 300.0, "c005": 300.0},
+                      reviewed_a={"c001", "c005", "c009"}, reviewed_b={"c001", "c005", "c009"})
+    checks["길이 모르는 0건 클립은 구간 계산에서 빼고 알린다"] = "클립 길이를 몰라" in txt10 and "c009" in txt10
+
     print("=" * 68)
     print(txt4)
     print("=" * 68)
@@ -432,6 +459,8 @@ def main() -> int:
     rb = read_ids(Path(a.clips_b)) if a.clips_b else None
     if (ra is None) != (rb is None):
         ap.error("--clips-a 와 --clips-b 는 함께 준다")
+    if ra is not None and not a.clips:
+        ap.error("--clips-a/--clips-b를 쓸 때는 --clips로 클립 길이도 준다 — 없으면 사건 0건 클립의 구간 수를 알 수 없다")
     if ra is not None and not (a.a and a.b):
         ap.error("--clips-a/--clips-b를 쓸 때는 --a/--b로 주석자를 명시한다 — 명세와 주석자의 짝이 바뀌면 안 된다")
     txt, _k = report(labels, who_a, who_b, durations, a.tol, a.slice_s, a.category, ra, rb)
