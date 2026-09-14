@@ -212,9 +212,9 @@ def merge_manifest(manifest: Path, rows: list[dict], start_index: int) -> list[d
     `--start-index`는 그 한 가지 방법일 뿐이다(#24 재리뷰 🟡). 그래서 남는 행은 항상 계산한다.
 
     - `start_index != 1` — 끝에 더하는 실행이다. 남는 행을 합친다
-    - `start_index == 1`인데 남는 행이 있다 — `--start-index`를 깜빡했거나 후보 목록이 줄었다.
-      덮어쓰기 전에 옛 파일을 `.bak`으로 남기고 크게 알린다. 정상적인 전체 재실행이면 남는 행이
-      없어 조용하다
+    - `start_index == 1`인데 남는 행이 있다 — `--start-index`를 깜빡했거나 · 후보 목록이 줄었거나 ·
+      이번에 읽기 실패한 영상이 있다(경고 문구와 같은 셋). 덮어쓰기 전에 옛 파일을 `.bak`(이미 있으면
+      `.bak2`…)으로 남기고 크게 알린다. 정상적인 전체 재실행이면 남는 행이 없어 조용하다
     """
     if not manifest.exists():
         return rows

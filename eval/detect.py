@@ -83,5 +83,10 @@ def run(f: Features, p: Params | None = None, clip_id: str = "") -> list[Detecti
 
 
 def detections_per_minute(dets: list[Detection], duration_s: float) -> float:
-    """PoC 실측(일반 영상 5.2건/분, 사건 빽빽 7.9건/분)과 같은 축의 값."""
+    """분당 발화 수. 라벨을 쓰지 않으므로 오탐률이 아니라 발화율이다.
+
+    같은 축의 실측 — PoC 104초 관측(`poc/README.md` 「탐지 오탐 — 104초에 9건」 → 5.2건/분)과
+    평가셋 165분 스윕(기본 임계값 6.53건/분, `docs/labeling-guide.md` §4). 「사건 빽빽 7.9건/분」은
+    출처가 없어 뺐다.
+    """
     return len(dets) / (duration_s / 60.0) if duration_s > 0 else 0.0
