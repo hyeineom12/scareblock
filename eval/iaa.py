@@ -216,7 +216,8 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
     basis = "검토 명세 기준" if by_spec else "라벨 기준 — 사건 0건으로 본 클립은 빠진다. --clips-a/--clips-b 권장"
     out.append(f"이중 라벨링 클립 {len(both)}개 ({basis}): {', '.join(both) if both else '없음'}")
     if only_a or only_b:
-        out.append(f"  한쪽만 라벨링한 클립은 제외 — {who_a}만 {len(only_a)}개 · "
+        # 명세 모드에서 이 수는 라벨이 아니라 명세 차이에서 온다(#32 재리뷰 짧은 것)
+        out.append(f"  한쪽만 {'검토한(명세에 있는)' if by_spec else '라벨링한'} 클립은 제외 — {who_a}만 {len(only_a)}개 · "
                    f"{who_b}만 {len(only_b)}개")
     if not both:
         out.append("\n두 사람이 함께 본 클립이 없다 — 일치도를 계산할 수 없다.")
@@ -302,7 +303,10 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
 
     # κ 역설 경고 — 관측 일치가 높은데 κ가 낮으면 지표가 상황에 안 맞는 것이다
     out.append("")
-    cats = {c for pair in items for c in pair} - {NONE}   # 「없음」을 뺀 카테고리
+    # 진짜 카테고리 혼동은 **매칭된 쌍이 서로 다른 카테고리를 말한 것**뿐이다. 한쪽만 단 사건은 상대가
+    # 「없음」이라 혼동이 아니라 누락이다. 카테고리 수를 items 전체에서 세면 한쪽만 단 사건 하나가
+    # siren이라는 이유로 역설 감지가 꺼져 「모호하다」로 떨어졌다(#32 재리뷰 🔴)
+    n_confused = sum(1 for p in pairs if p.matched and not p.agreed)
     if not items:
         # 두 사람 모두 사건 0건 — 대조 클립에서 판정이 일치한 것이다. 일치도를 낼 사건이 없을 뿐
         # 「기준이 모호하다」가 아니다(#32 리뷰 🔴, 🔴3 반영으로 0건 클립이 both에 들어오며 열린 길)
@@ -322,7 +326,7 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
         headline = k_sl
     # 역설 판정은 카테고리가 1종일 때만 한다. 5종에서 진짜 카테고리 혼동으로 κ가 낮은 것을
     # 구간 κ로 넘기면 카테고리를 안 보는 지표가 그 불일치를 지운다(#27 리뷰 🟡7)
-    elif items and len(cats) <= 1 and pe_ev > 0.5 and po_ev >= 0.7 and k_ev < 0.6:
+    elif items and n_confused == 0 and pe_ev > 0.5 and po_ev >= 0.7 and k_ev < 0.6:
         out.append(f"⚠ **사건 매칭 κ를 그대로 쓰면 안 된다.** 관측 일치가 "
                    f"{po_ev:.1%}인데 κ가 {k_ev:.3f}다. 우연 일치 pe가 {pe_ev:.3f}로 "
                    f"높기 때문이고, 원인은 카테고리가 사실상 한 종류여서 주변합이 "
@@ -482,6 +486,13 @@ def _selftest() -> int:
     txt15, _ = report(half, "A", "B", {"c001": 300.0, "c005": 300.0},
                       reviewed_a={"c001", "c005"}, reviewed_b={"c001"})
     checks["한쪽 명세에만 없는 클립의 라벨도 알린다"] = "명세에 없는 클립의 라벨 1건(c005(B))" in txt15
+
+    # ⑯ #32 재리뷰 🔴 — 한쪽만 단 사건의 카테고리를 바꿔도 판정이 안 바뀐다. 매칭된 8쌍은 전부 일치하고
+    # 혼동은 0건이라, 짝 없는 사건 하나가 siren이든 jumpscare든 두 사람의 일치 양상은 같다
+    ev_siren = ev[:-1] + [_lab("c001", 230, 231, "A", "siren")]
+    txt16, k16 = report(ev_siren, "B", "A", dur)
+    checks["한쪽만 단 사건의 카테고리를 바꿔도 판정이 안 바뀐다"] = (
+        k16 == k16 and abs(k16 - k4) < 1e-9 and "κ 역설" in txt16 and "기준이 모호하다" not in txt16)
 
     print("=" * 68)
     print(txt4)
