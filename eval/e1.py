@@ -1,12 +1,13 @@
-"""E1 — lookahead 시간별 성능 곡선. 논문의 표 하나.
+"""E1 — 탐지 지연 분포와 lookahead 시간별 성능 곡선. 발표(11.05)의 결과 표.
 
 사용:
     python3 -m eval.e1 --labels labels.csv --audio _local/wav
     python3 -m eval.e1 --selftest          # 합성 오디오로 파이프라인 점검
 
-주장: lookahead 0에서 적시성이 무너지면 "지연이 필요하다"가 증명된다.
-곡선이 1초 근처에서 평평해지면 3초는 과잉이라는 뜻이고, 그때는
-"필요한 양은 3초가 아니라 X초"로 쓴다 — 그쪽이 더 강한 결과다.
+헤드라인은 **탐지 지연 분포**(라벨 onset → 확신; 중앙값·p90·최댓값)다.
+lookahead 0 열의 적시성은 라벨 onset이 상승 시작점이면 0이다(확신 시각은 분석 창의 끝) —
+결과가 아니다. 라벨이 정점 근처에 찍히면 지연이 음수가 되어 0이 아니게 되므로 음수 건수를 함께 낸다.
+p90이 1초 근처면 "필요한 양은 3초가 아니라 X초"로 쓴다.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from scipy.io import wavfile
 
 from . import labels as L
 from .detect import Detection, Params, detections_per_minute, run
-from .evaluate import RENDER_S, match, score
+from .evaluate import RENDER_S, latency_summary, match, score
 from .features import extract, load_wav
 
 LOOKAHEADS = [0.0, 0.5, 1.0, 2.0, 3.0, 5.0]
@@ -93,18 +94,48 @@ def render(rows, per_min: float, total_s: float,
         head += f" · onset 되짚기 상한 {rows[0].onset_capped}건"
     if rows[0].render_s:
         head += f" · 렌더링 {rows[0].render_s:.2f}s 포함"
+    # 헤드라인 — 탐지 지연 분포. 머리줄(표의 성격) 바로 다음, 표보다 먼저 둔다.
+    # lookahead 0 열은 정의상 0이라 결과로 부를 수 있는 것은 이 분포다(6e 분석, 사용자 결정 09.13)
+    s = latency_summary(rows[0].latencies)
+    render_s = rows[0].render_s
+    if s is None:
+        headline = ["**탐지 지연** — 매칭된 사건이 없어 분포를 낼 수 없다"]
+    else:
+        need = s["p90"] + render_s
+        # 렌더링 시간은 이미 need에 들어 있다. 「+ 렌더링」으로 쓰면 두 번 더한 것으로 읽힌다(#33 리뷰 🟡3)
+        tail = f" (렌더링 {render_s:.2f} s 포함)" if render_s else " (렌더링 시간 미측정)"
+        headline = [
+            f"**탐지 지연** (라벨 onset → 확신, 매칭 {s['n']}건) — "
+            f"중앙값 {s['median']:.3f} s · p90 {s['p90']:.3f} s · 최댓값 {s['max']:.3f} s",
+            # 음수 p90이 「필요한 지연량 −0.25 s」로 헤드라인에 나가지 않게 바닥을 둔다(#33 리뷰 🔴1)
+            f"→ 필요한 지연량(p90 기준) ≈ {max(need, 0.0):.3f} s{tail}"
+            + (" · 사건 10건 미만이라 p90은 보간값" if s["n"] < 10 else ""),
+        ]
+        if s["negative"]:
+            headline.append(
+                f"⚠ 음수 지연 {s['negative']}건 — 라벨 onset이 탐지기 확신보다 늦게 찍혔다. "
+                f"정점 근처를 찍었는지 라벨을 확인한다(labeling-guide §3)"
+                + (" · 필요한 지연량은 0으로 바닥을 뒀다" if need < 0 else ""))
     out = [
         head,
+        *headline,
         "",
-        "| lookahead | 적시성 | precision | recall | F1 | TP | FP | FN |",
-        "|---|---|---|---|---|---|---|---|",
+        "| lookahead | 적시성 | 잡은 것 중 제때 | precision | recall | F1 | TP | FP | FN |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for m in rows:
         out.append(
-            f"| {m.lookahead:.1f}s | **{m.timeliness:.3f}** | {m.precision:.3f} | "
-            f"{m.recall:.3f} | {m.f1:.3f} | {m.tp} | {m.fp} | {m.fn} |"
+            f"| {m.lookahead:.1f}s | **{m.timeliness:.3f}** | {m.timely_of_detected:.3f} | "
+            f"{m.precision:.3f} | {m.recall:.3f} | {m.f1:.3f} | {m.tp} | {m.fp} | {m.fn} |"
         )
-    out += ["", "적시성 = (라벨 onset → 확신) + 렌더링 시간 ≤ lookahead 인 참 사건의 비율."]
+    out += [
+        "",
+        "적시성 = (라벨 onset → 확신) + 렌더링 시간 ≤ lookahead 인 참 사건의 비율.",
+        "적시성 = recall × 잡은 것 중 제때 — 못 잡은 사건도 「늦음」으로 세지므로 recall을 넘을 수 없다.",
+        "잡은 것 중 제때 = in_time / TP — lookahead별로 읽으면 탐지 지연 분포의 누적 분포다.",
+        "lookahead 0 열은 라벨 onset이 상승 시작점이면 0이다(확신은 분석 창의 끝) — 결과가 아니다. "
+        "0보다 크면 라벨이 늦게 찍힌 사건이 섞였다.",
+    ]
     return "\n".join(out)
 
 
@@ -244,8 +275,53 @@ def _selftest() -> int:
                      and _raises("clip_id\nc001\nc001\n", "두 번"))
         print(f"명세 파서: 정상·열 없음·빈 명세·중복 {'통과' if parser_ok else '실패'}")
 
+        # 사용자 결정(09.13) — in_time/tp 열과 지연 분포 헤드라인.
+        # 합성 오디오는 지연이 전부 0.005 s이고 recall이 1이라 새 열·헤드라인을 못 가른다(#33 리뷰 🔴2).
+        # 지연이 lookahead 경계(0.5·1.0·2.0) 양쪽에 흩어지고 미탐·음수 지연이 섞인 픽스처를 직접 만들어
+        # **손으로 센 기대값**과 대조한다 — 틀리게 구현하면 깨지는 값이다.
+        #   (라벨 onset, 탐지기 onset, 확신)       지연 = 확신 − 라벨 onset
+        U = [(10.0, 10.0, 10.3), (20.0, 20.0, 20.7), (30.0, 30.0, 31.4),
+             (40.0, 40.0, 42.5),
+             (50.0, 50.45, 50.6),   # 라벨 기준 0.6 · 탐지기 onset 기준이면 0.15 — 둘을 섞으면 L=0.5 열이 바뀐다
+             (60.0, None, None)]    # 미탐 → recall 5/6
+        ut = [L.Label("u", "u1", 0.0, on, on + 0.6, "jumpscare") for on, _, _ in U]
+        ud = [Detection(onset=do, fire=fi, score=1.0, clip_id="u1") for _, do, fi in U if do is not None]
+        urows = [score(ut, ud, la) for la in LOOKAHEADS]
+        want_tod = [0 / 5, 1 / 5, 3 / 5, 4 / 5, 5 / 5, 5 / 5]   # 지연 [0.3 0.6 0.7 1.4 2.5] 중 제때
+        want_tl = [w * 5 / 6 for w in want_tod]                  # 참 사건 6건
+        us = latency_summary(urows[0].latencies)
+        lat_ok = (all(abs(m.timely_of_detected - w) < 1e-9 for m, w in zip(urows, want_tod))
+                  and all(abs(m.timeliness - w) < 1e-9 for m, w in zip(urows, want_tl))
+                  and us is not None and us["n"] == 5 and abs(us["median"] - 0.7) < 1e-9
+                  and abs(us["p90"] - 2.06) < 1e-9 and abs(us["max"] - 2.5) < 1e-9
+                  and us["negative"] == 0)
+        # 🔴1 — 라벨 onset이 정점 근처에 찍혀 지연이 음수인 사건
+        nt = [L.Label("u", "u2", 0.0, 10.3, 10.9, "jumpscare")]
+        nd = [Detection(onset=10.0, fire=10.05, score=1.0, clip_id="u2")]
+        nrows = [score(nt, nd, la) for la in LOOKAHEADS]
+        ntxt = render(nrows, 1.0, 60.0)
+        neg_ok = ("음수 지연 1건" in ntxt and "≈ 0.000 s" in ntxt and "정의상 0" not in ntxt
+                  and abs(nrows[0].timeliness - 1.0) < 1e-9)
+        # 🟡3 — 이미 더한 렌더링 시간을 「+ 렌더링」으로 또 붙이지 않는다
+        rtxt = render([score(ut, ud, la, render_s=0.2) for la in LOOKAHEADS], 1.0, 60.0)
+        # 표 아래 주석의 「확신) + 렌더링 시간」은 정의라서 제외하고, 헤드라인 줄만 본다
+        rhead = next((l for l in rtxt.splitlines() if l.startswith("→ 필요한 지연량")), "")
+        render_ok = rhead.startswith("→ 필요한 지연량(p90 기준) ≈ 2.260 s (렌더링 0.20 s 포함)") and "+ 렌더링" not in rhead
+        txt = render(rows, per_min, total, n_used=len(clip_audio), n_expected=len(specs))
+        lines = txt.splitlines()
+        head_order_ok = (lines[0].startswith("클립") and lines[1].startswith("**탐지 지연**")
+                         and "잡은 것 중 제때" in txt)
+        print(f"헤드라인: {lines[1]}")
+        print(f"지연 픽스처(경계 양쪽 · 미탐 1): 잡은 것 중 제때·적시성·중앙값·p90 "
+              f"{'일치' if lat_ok else '불일치'} · 음수 지연 {'알림' if neg_ok else '실패'} · "
+              f"렌더링 표기 {'통과' if render_ok else '실패'}")
+
         ok = (
-            mirror_ok
+            lat_ok
+            and neg_ok
+            and render_ok
+            and head_order_ok
+            and mirror_ok
             and head2_ok
             and parser_ok
             and head_ok
