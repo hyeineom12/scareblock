@@ -7,6 +7,9 @@ _local/
 *.webm
 *.wav
 *.m4a
+# 명세 백업 — clipcut이 덮어쓰기 전에 남긴다. clips.csv 옆에 생겨 git add에 딸려 들어가기 쉽다
+*.bak
+*.bak[0-9]*
 
 # 파이썬
 __pycache__/
