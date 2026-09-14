@@ -206,7 +206,7 @@ def write_manifest(path: Path, rows: list[dict]) -> None:
 
 
 def merge_manifest(manifest: Path, rows: list[dict], start_index: int) -> list[dict]:
-    """이번 실행의 행과 기존 명세를 합친 결과를 돌려준다. 파일은 쓰지 않는다.
+    """이번 실행의 행과 기존 명세를 합친 결과를 돌려준다. 명세는 쓰지 않는다 — `.bak`은 남길 수 있다.
 
     **기존 명세에 이번 실행이 안 만든 행이 있으면** 그게 명세가 날아가는 조건이다 —
     `--start-index`는 그 한 가지 방법일 뿐이다(#24 재리뷰 🟡). 그래서 남는 행은 항상 계산한다.
@@ -234,11 +234,21 @@ def merge_manifest(manifest: Path, rows: list[dict], start_index: int) -> list[d
         print(f"알림 — --start-index {start_index}: 기존 명세 {len(keep)}행을 유지하고 "
               f"{len(rows)}행을 더한다", file=sys.stderr)
         return sorted(keep + rows, key=lambda r: r["clip_id"])
+    # **이미 있는 .bak은 덮지 않는다.** 이 안전망이 필요한 사람은 경고를 못 본 사람이고, 그 사람은
+    # 대개 한 번 더 돌린다 — 그때 좋은 백업(44행)이 방금 망가진 명세(10행)로 덮이면 복구가 불가능하다.
+    # 가장 오래된 백업이 가장 귀하다(#24 재리뷰 🟡1)
     bak = manifest.with_name(manifest.name + ".bak")
+    k = 1
+    while bak.exists():
+        k += 1
+        bak = manifest.with_name(f"{manifest.name}.bak{k}")
     bak.write_bytes(manifest.read_bytes())
+    # 원인은 하나가 아니다 — 영상 하나를 일시적으로 못 읽어도 그 클립 행이 남는다(#24 재리뷰 🟡3).
+    # 옛 행을 이어받는 처리는 다음 PR로 두고, 여기서는 원인을 전부 열어 둔다
     print(f"경고 — 기존 명세에 이번 실행이 만들지 않은 행이 {len(keep)}개 있다 "
-          f"({', '.join(sorted(r['clip_id'] for r in keep)[:5])}…). --start-index 없이 돌려서 "
-          f"덮어쓴다 — 끝에 더하려던 거라면 --start-index를 주고 다시 돌려라. 옛 명세는 {bak.name}에 남겼다",
+          f"({', '.join(sorted(r['clip_id'] for r in keep)[:5])}…). 덮어쓴다. 원인은 셋 중 하나다 — "
+          f"--start-index를 깜빡했거나(끝에 더하려던 거면 주고 다시 돌린다) · 후보 목록이 줄었거나 · "
+          f"이번에 읽기 실패한 영상이 있다(그 영상만 다시 돌린다). 옛 명세는 {bak.name}에 남겼다",
           file=sys.stderr)
     return rows
 
