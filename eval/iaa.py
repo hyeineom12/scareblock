@@ -330,7 +330,8 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
     elif items and n_confused == 0 and pe_ev > 0.5 and po_ev >= 0.7 and k_ev < 0.6:
         out.append(f"⚠ **사건 매칭 κ를 그대로 쓰면 안 된다.** 관측 일치가 "
                    f"{po_ev:.1%}인데 κ가 {k_ev:.3f}다. 우연 일치 pe가 {pe_ev:.3f}로 "
-                   f"높기 때문이고, 원인은 카테고리가 사실상 한 종류여서 주변합이 "
+                   f"높기 때문이고, 원인은 매칭된 쌍이 전부 같은 카테고리라(혼동 0건) 불일치가 "
+                   f"「한쪽만 단 사건」에서만 나오고, 그래서 주변합이 "
                    f"「거의 전부 사건, 드물게 없음」으로 치우친 것이다(κ 역설). "
                    f"데이터가 나쁜 것이 아니라 지표가 이 상황에 맞지 않는다.")
         out.append(f"→ **시간 구간 κ {k_sl:.3f}** 를 대표값으로 본다: {band(k_sl)}")
