@@ -26,3 +26,9 @@ Thumbs.db
 node_modules/
 dist/
 build/
+
+# 도구 캐시
+.ruff_cache/
+
+# git worktree 잔여물 — 레포 전체가 복사돼 있어 add -A 에 딸려가면 두 배가 된다
+wt*_path/
