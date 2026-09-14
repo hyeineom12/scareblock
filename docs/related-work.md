@@ -74,7 +74,7 @@ README 「관련 연구와 차별점」에 비교표로 정리되어 있다.
   문제 설정 자체**를 제안한다. 지연의 출처로 네트워크 전송과 함께 **욕설·노출·방송사고를 막기 위한
   의도적 지연**을 든다. flattened I3D + window-based suppression.
   실험 버퍼는 78프레임 = **약 2~3초**. THUMOS'14 · ActivityNet v1.3 · HACS Segment에서 검증,
-  THUMOS'14 기준 **mAP +13.8%**
+  THUMOS'14 기준 **mAP +13.8%p**(300프레임 오프셋에서 BF-I3D 53.6 vs StartNet 39.8 — 상대 비율이 아니라 절대 %p다)
 - [Real-time Online Video Detection with Temporal Smoothing Transformers (TeSTra)](https://arxiv.org/abs/2209.09236) — 실시간 online detection의 latency-정확도 트레이드오프
 - [Temporally smooth online action detection using cycle-consistent future anticipation (FATSnet)](https://www.sciencedirect.com/science/article/abs/pii/S0031320321001412)
 - [Online human action detection and anticipation in videos: A survey](https://www.sciencedirect.com/science/article/abs/pii/S0925231222003617) — 계열 전체 지도
@@ -100,7 +100,7 @@ README 「관련 연구와 차별점」에 비교표로 정리되어 있다.
 
 **정독으로 얻은 것 둘.**
 
-1. **3초라는 숫자에 근거가 생겼다.** 이 논문의 실험 버퍼가 약 2~3초이고 그 구간에서 mAP 13.8%
+1. **3초라는 숫자에 근거가 생겼다.** 이 논문의 실험 버퍼가 약 2~3초이고 그 구간에서 mAP 13.8%p
    향상을 보고했다. 우리 3초를 **"선행 연구에서 유효성이 보고된 구간을 채택했다"** 로 쓸 수 있다.
    "왜 하필 3초냐"에 대한 답이 임의 선택에서 인용 있는 설계 결정으로 바뀐다
 2. **이 논문이 스스로 갭을 열어놨다.** 응용 예시로 *"라이브 웹캐스트에서 NSFW(노출·폭력)가
@@ -313,7 +313,7 @@ AudioSet 온톨로지에 `Siren`, `Screaming`, `Explosion`, `Gunshot` 클래스�
 
 | 결정 | 근거 | 출처 |
 |---|---|---|
-| **지연 3초** | online action detection에서 약 2~3초 버퍼로 THUMOS'14 mAP +13.8% 보고 | [Time Buffers](https://arxiv.org/abs/2010.03016) |
+| **지연 3초** | online action detection에서 약 2~3초 버퍼로 THUMOS'14 mAP +13.8%p 보고 | [Time Buffers](https://arxiv.org/abs/2010.03016) |
 | **파인튜닝 대신 zero-shot** | 안전성 파인튜닝이 일반화 성능을 크게 떨어뜨린다는 보고 | [SafeR-CLIP](https://arxiv.org/abs/2511.16743) |
 | **점프 스케어에 오디오 우선** | energy entropy 기반 급작스러운 큰 소리는 affective computing의 표준 특징 | [Violence Detection in Hollywood Movies](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0078506) |
 | **상승 시간(rise time)을 특징에 포함** | 상승 시간이 놀람 반응의 진폭·발생 확률을 좌우 | Blumenthal (1986, 1988) [§1.6](#16-놀람-반사--점프-스케어의-심리생리학적-근거) |
@@ -332,7 +332,7 @@ AudioSet 온톨로지에 `Siren`, `Screaming`, `Explosion`, `Gunshot` 클래스�
 
 | # | 실험 | 무엇을 보이나 | 필요한 것 | 단계 |
 |---|---|---|---|---|
-| **E1** | **지연 시간별 성능 곡선** (0 · 0.5 · 1 · 2 · 3 · 5초) | **결과 그 자체.** "점프 스케어를 잡으려면 몇 초가 필요한가"에 대한 수치이며, 0초에서 무너지는 것으로 지연의 필요성이 증명된다 | 평가셋 + 규칙 탐지기 | **11.05 발표** (09.14 논문에는 설계만) |
+| **E1** | **지연 시간별 성능 곡선** (0 · 0.5 · 1 · 2 · 3 · 5초) | **결과 그 자체.** "점프 스케어를 잡으려면 몇 초가 필요한가"에 대한 수치. 헤드라인은 사건별 탐지 지연(라벨 onset → 탐지기 확신) 분포의 중앙값·p90·최댓값 | 평가셋 + 규칙 탐지기 | **11.05 발표** (09.14 논문에는 설계만) |
 | **E3** | **카테고리별 성능** (점프 스케어 vs 지속 상태형) + **유지 시간 T와 필요 lookahead L의 관계** | **"lookahead로 분류해야 한다"의 직접 증거.** 지속 상태형은 지연 0에서도 잡히고 점프 스케어는 못 잡히면 분류가 증명된다. T–L 관계가 나오면 **분류가 목록에서 규칙이 된다** — 새 카테고리는 T만 재서 L을 예측한다 | 멀티카테고리 라벨 + `duration` | 05 |
 | E2 | 규칙기반 / 학습모델 / CLIP zero-shot / GPT-4o 4자 비교 | latency-정확도 트레이드오프. 논문 핵심 표 | 4개 경로 구현 | 03·05 |
 | E4 | 720p·1080p 링버퍼 자원 측정 | 브라우저 클라이언트 실행 가능성의 경계 | M1 빌드 | 01 |
