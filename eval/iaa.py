@@ -223,8 +223,14 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
         return "\n".join(out), float("nan")
 
     # 건수 줄과 지표가 같은 집합을 보게 `both`로 좁힌다. 명세 밖 클립의 라벨은 따로 알린다(#32 재리뷰 🟡)
-    stray = sorted({x.clip_id for x in la + lb} - ca - cb) if by_spec else []
-    n_stray = sum(1 for x in la + lb if x.clip_id in stray)
+    # **각자의 명세와 각자의 라벨을 대조한다.** 명세는 주석자마다 따로 받으니 한쪽만 낡는 것이 기본 경로다.
+    # 두 명세 모두에서 빼는 식(`- ca - cb`)은 한쪽 명세에만 없는 클립을 못 보고, 그 클립의 이중 라벨링이
+    # 조용히 빠진 채 「한쪽만 라벨링했다」로 거꾸로 보고됐다(#32 재리뷰 🟡). both에 넣지는 않는다 —
+    # 명세가 낡았는지 clip_id가 틀렸는지는 사람이 본다
+    stray_ab = [(x, who_a) for x in la if x.clip_id not in ca] + [(x, who_b) for x in lb if x.clip_id not in cb] \
+        if by_spec else []
+    stray = sorted({f"{x.clip_id}({w})" for x, w in stray_ab})
+    n_stray = len(stray_ab)
     la = [x for x in la if x.clip_id in both]
     lb = [x for x in lb if x.clip_id in both]
 
@@ -275,7 +281,7 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
     if over:
         out.append(f"  ⚠ 명세 길이보다 뒤까지 찍힌 사건이 있어 구간 계산 길이를 마지막 offset까지 늘렸다: {', '.join(over)}")
     if stray:
-        out.append(f"  ⚠ 검토 명세에 없는 클립의 라벨 {n_stray}건({', '.join(stray)}) — 계산에서 빠졌다. 명세가 낡았는지 확인한다")
+        out.append(f"  ⚠ 자기 검토 명세에 없는 클립의 라벨 {n_stray}건({', '.join(stray)}) — 계산에서 빠졌다. 그 주석자의 명세가 낡았는지 확인한다")
     gaps = [p.gap for p in pairs if p.matched]
     out.append("")
     out.append(f"사건 — {who_a} {len(la)}건 · {who_b} {len(lb)}건 · "
@@ -445,7 +451,7 @@ def _selftest() -> int:
     txt11a, _ = report(tail, "B", "A", {"c001": 300.0})
     txt11b, _ = report(tail, "B", "A", {"c001": 298.7})
     row = lambda t, name: t.split(f"| **{name}**")[1].split("|")[1].strip()   # 값 칸
-    checks["명세 길이 밖 사건을 지우지 않고 알린다 (구간 κ·PSA가 길이에 안 흔들린다)"] = (
+    checks["명세 길이 밖 사건을 지우지 않고 알린다"] = (
         row(txt11a, "시간 구간 κ") == row(txt11b, "시간 구간 κ")
         and row(txt11a, "양성 특정 일치도") == row(txt11b, "양성 특정 일치도")
         and "명세 길이보다 뒤까지" in txt11b and "c001(+0.70초)" in txt11b)
@@ -467,7 +473,15 @@ def _selftest() -> int:
                       reviewed_a={"c001", "c005"}, reviewed_b={"c001", "c005"})
     checks["건수는 이중 라벨링 클립만 · 명세 밖 라벨은 알린다"] = (
         "A 2건" in txt14 and "B 1건" in txt14
-        and "명세에 없는 클립의 라벨 2건(c777, c888)" in txt14)
+        and "명세에 없는 클립의 라벨 2건(c777(B), c888(A))" in txt14)
+
+    # ⑮ #32 재리뷰 🟡 — 한쪽 명세에만 없는 클립. B는 c005에 라벨을 달았는데 B의 명세가 낡았다.
+    # 두 명세 모두에서 빼는 식으로는 c005가 A 명세에 있어 안 걸리고, 조용히 빠진다
+    half = [_lab("c001", 10, 11, "A"), _lab("c001", 10.05, 11, "B"),
+            _lab("c005", 40, 41, "A"), _lab("c005", 40.1, 41, "B")]
+    txt15, _ = report(half, "A", "B", {"c001": 300.0, "c005": 300.0},
+                      reviewed_a={"c001", "c005"}, reviewed_b={"c001"})
+    checks["한쪽 명세에만 없는 클립의 라벨도 알린다"] = "명세에 없는 클립의 라벨 1건(c005(B))" in txt15
 
     print("=" * 68)
     print(txt4)
