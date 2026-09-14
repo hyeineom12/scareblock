@@ -324,8 +324,9 @@ def report(labels: list[Label], who_a: str, who_b: str, durations: dict[str, flo
         else:
             out.append(f"→ **시간 구간 κ {k_sl:.3f}** 를 대표값으로 본다: {band(k_sl)}")
         headline = k_sl
-    # 역설 판정은 카테고리가 1종일 때만 한다. 5종에서 진짜 카테고리 혼동으로 κ가 낮은 것을
-    # 구간 κ로 넘기면 카테고리를 안 보는 지표가 그 불일치를 지운다(#27 리뷰 🟡7)
+    # 역설 판정은 **매칭된 쌍 사이에 카테고리 혼동이 없을 때만** 한다(n_confused == 0). 진짜 혼동으로 κ가
+    # 낮은 것을 구간 κ로 넘기면 카테고리를 안 보는 지표가 그 불일치를 지운다(#27 리뷰 🟡7). 한쪽만 단
+    # 사건의 카테고리는 혼동이 아니라 누락이라 세지 않는다(#32 재리뷰 🔴). 카테고리가 1종이면 늘 0이다
     elif items and n_confused == 0 and pe_ev > 0.5 and po_ev >= 0.7 and k_ev < 0.6:
         out.append(f"⚠ **사건 매칭 κ를 그대로 쓰면 안 된다.** 관측 일치가 "
                    f"{po_ev:.1%}인데 κ가 {k_ev:.3f}다. 우연 일치 pe가 {pe_ev:.3f}로 "
