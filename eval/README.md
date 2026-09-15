@@ -132,8 +132,21 @@ pip install -r eval/requirements.txt
 python3 -m eval.e1 --labels labels.csv --audio _local/wav --clips _local/clips/clips.csv
 ```
 
-기울기 조건을 켜려면 `--drms-min 값`. 기본값 0은 조건을 끈 상태다.
+임계값은 `detect.Params`의 필드가 그대로 인자다 — `--surge-of-quiet` · `--quiet-of-peak` ·
+`--surge-of-peak` · `--drms-min` · `--cooldown-s` · `--silence-floor` · `--backtrack-max-s`.
+기본값과 다른 값은 표 아래 「동작점:」 줄에 남는다. 기울기 조건은 `--drms-min 값`으로 켠다(기본 0은 끔).
 M1 실측 뒤 렌더링 시간을 반영하려면 `--render-s 값`.
+
+**동작점 고르기 — 라벨을 보기 전에.** `--rate-sweep`은 분당 발화율 표만 내고 `--labels`를 주면 거부한다
+([labeling-guide §4](../docs/labeling-guide.md)).
+
+```bash
+python3 -m eval.e1 --audio _local/dataset/wav --clips _local/dataset/clips.csv \
+  --rate-sweep surge_of_quiet=5,20,35,60
+```
+
+44클립·212.7분(2026.09.15)에서 6.37 · 2.19 · 1.18 · 0.49건/분이다. labeling-guide §4의
+6.53 · 2.36 · 1.27 · 0.51은 절단 도중 165분에서 잰 값이라 다르다.
 
 **데이터 없이 파이프라인만 점검:**
 

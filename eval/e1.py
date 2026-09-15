@@ -15,7 +15,7 @@ import argparse
 import shutil
 import sys
 import tempfile
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +45,39 @@ def analyse(clip_audio: dict[str, Path], truth: list[L.Label], params: Params,
 
     rows = [score(all_true, all_det, la, render_s=render_s) for la in lookaheads]
     return rows, detections_per_minute(all_det, total_s), total_s
+
+
+def rate_sweep(clip_audio: dict[str, Path], field: str, values: list[float], base: Params):
+    """임계값 하나를 바꿔가며 분당 발화율을 잰다. **라벨을 읽지 않는다.**
+
+    동작점은 이 표로 라벨을 보기 전에 고정한다(labeling-guide §4). 라벨을 인자로 받지 않는
+    것이 그 순서를 코드로 지키는 방법이다 — 여기서 recall을 같이 내면 결과를 보고 고르게 된다.
+    특징은 클립마다 한 번만 뽑는다.
+    """
+    feats, total_s = {}, 0.0
+    for clip_id, wav in sorted(clip_audio.items()):
+        x, sr = load_wav(wav)
+        feats[clip_id] = extract(x, sr)
+        total_s += len(x) / sr
+    out = []
+    for v in values:
+        p = replace(base, **{field: v})
+        dets = [d for cid, f in feats.items() for d in run(f, p, clip_id=cid)]
+        out.append((v, len(dets), detections_per_minute(dets, total_s)))
+    return out, total_s
+
+
+def params_from_args(a) -> Params:
+    """`--surge-of-quiet` 같은 인자를 Params로. 기본값은 Params 자신의 것이다."""
+    return Params(**{f.name: getattr(a, f.name) for f in fields(Params)})
+
+
+def changed_params(p: Params) -> str:
+    """기본값과 다른 임계값만 적는다 — 표가 어느 동작점에서 나왔는지 출력에 남긴다."""
+    d = Params()
+    diff = [f"{f.name}={getattr(p, f.name):g}" for f in fields(Params)
+            if getattr(p, f.name) != getattr(d, f.name)]
+    return "동작점: " + (" · ".join(diff) if diff else "기본 임계값")
 
 
 def evaluation_set(truth: list[L.Label], clip_ids: list[str], audio: dict[str, Path]):
@@ -316,8 +349,23 @@ def _selftest() -> int:
               f"{'일치' if lat_ok else '불일치'} · 음수 지연 {'알림' if neg_ok else '실패'} · "
               f"렌더링 표기 {'통과' if render_ok else '실패'}")
 
+        # 동작점 인자 — 필드가 실제로 탐지기에 닿아야 한다. 무한대 급등 배수면 0건,
+        # 기본값이면 기본 실행과 같은 건수. 인자를 Params에 안 넘기면 두 줄이 같아져 깨진다.
+        sweep, _ = rate_sweep(clip_audio, "surge_of_quiet", [5.0, 1e9], Params())
+        cli = argparse.Namespace(**{f.name: f.default for f in fields(Params)})
+        cli.surge_of_quiet = 20.0
+        n_default = sum(len(run(extract(*load_wav(w)), Params(), clip_id=c))
+                        for c, w in clip_audio.items())
+        sweep_ok = (sweep[0][1] == n_default > 0 and sweep[1][1] == 0
+                    and params_from_args(cli) == Params(surge_of_quiet=20.0)
+                    and changed_params(Params()) == "동작점: 기본 임계값"
+                    and changed_params(params_from_args(cli)) == "동작점: surge_of_quiet=20")
+        print(f"발화율 스윕: 기본 {sweep[0][1]}건 · 급등 배수 무한대 {sweep[1][1]}건 · "
+              f"인자 → Params {'통과' if sweep_ok else '실패'}")
+
         ok = (
-            lat_ok
+            sweep_ok
+            and lat_ok
             and neg_ok
             and render_ok
             and head_order_ok
@@ -343,16 +391,49 @@ def main() -> int:
     ap.add_argument("--audio", help="clip_id.wav 들이 있는 디렉터리")
     ap.add_argument("--clips", help="클립 명세 CSV — 평가 분모. 없으면 wav 디렉터리 전체")
     ap.add_argument("--annotator", help="이 주석자의 라벨만 쓴다 (기본: 가장 많이 단 사람)")
-    ap.add_argument("--drms-min", type=float, default=0.0, help="dRMS/dt 하한 (0이면 끔)")
+    # 동작점 — detect.Params의 필드를 그대로 연다 (--surge-of-quiet 등). 기본값은 Params의 것
+    for f in fields(Params):
+        ap.add_argument("--" + f.name.replace("_", "-"), type=float, default=f.default,
+                        help=f"detect.Params.{f.name} (기본 {f.default:g})")
     ap.add_argument("--render-s", type=float, default=RENDER_S,
                     help="블러 렌더링 시간(초). M1 실측값을 넣으면 적시성에 더해진다")
+    ap.add_argument("--rate-sweep", metavar="필드=값,값,…",
+                    help="예: surge_of_quiet=5,20,35,60 — 분당 발화율 표만 낸다. 라벨을 읽지 않는다")
     ap.add_argument("--selftest", action="store_true", help="합성 오디오로 파이프라인 점검")
     a = ap.parse_args()
 
     if a.selftest:
         return _selftest()
+    params = params_from_args(a)
+
+    if a.rate_sweep:
+        if a.labels:
+            ap.error("--rate-sweep은 라벨을 읽지 않는다 — 동작점은 라벨을 보기 전에 고른다. --labels를 빼라")
+        if not a.audio:
+            ap.error("--rate-sweep에는 --audio가 필요하다")
+        name, _, vals = a.rate_sweep.partition("=")
+        names = {f.name for f in fields(Params)}
+        if name not in names or not vals:
+            ap.error(f"--rate-sweep 형식은 필드=값,값 — 필드는 {sorted(names)}")
+        audio = {p.stem: p for p in Path(a.audio).glob("*.wav")}
+        ids = L.load_clips(a.clips) if a.clips else sorted(audio)
+        used = {c: audio[c] for c in ids if c in audio}
+        if not used:
+            print(f"실패: 평가할 wav가 없다 — --audio {a.audio}", file=sys.stderr)
+            return 1
+        missing = [c for c in ids if c not in audio]
+        if missing:
+            print(f"경고: wav 없는 클립 {missing}", file=sys.stderr)
+        table, total = rate_sweep(used, name, [float(v) for v in vals.split(",")], params)
+        print(f"클립 {len(used)}/{len(ids)}개 · {total / 60:.1f}분 · {changed_params(params)} "
+              f"· 라벨 미사용 — 오탐률이 아니라 발화율")
+        print(f"| {name} | 탐지 | 건/분 |\n|---|---|---|")
+        for v, n, r in table:
+            print(f"| {v:g} | {n} | {r:.2f} |")
+        return 0
+
     if not (a.labels and a.audio):
-        ap.error("--labels 와 --audio 가 필요하다 (또는 --selftest)")
+        ap.error("--labels 와 --audio 가 필요하다 (또는 --selftest · --rate-sweep)")
 
     truth = L.load(a.labels)
     problems = L.validate(truth)
@@ -426,11 +507,10 @@ def main() -> int:
               f"정밀도 수치를 방어할 수 없다", file=sys.stderr)
 
     shown = pick if pick is not None else (who[0] if len(who) == 1 and who[0] else None)
-    rows, per_min, total = analyse(
-        used, truth, Params(drms_min=a.drms_min), render_s=a.render_s,
-    )
+    rows, per_min, total = analyse(used, truth, params, render_s=a.render_s)
     print(render(rows, per_min, total, n_used=len(used), n_expected=len(clip_ids),
                  annotator=shown, has_spec=bool(a.clips)))
+    print(changed_params(params))
     return 0
 
 
