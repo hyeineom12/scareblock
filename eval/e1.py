@@ -67,6 +67,28 @@ def rate_sweep(clip_audio: dict[str, Path], field: str, values: list[float], bas
     return out, total_s
 
 
+def parse_rate_sweep(spec: str, given: Params) -> tuple[str, list[float]]:
+    """`필드=값,값` 을 (필드, 값들)로. 형식이 틀리면 ValueError에 이유를 담는다.
+
+    **같은 필드를 인자로도 준 경우를 막는다** (#36 리뷰 🟡1). 스윕은 행마다 그 필드를
+    덮어쓰므로, 함께 받으면 표 어느 행에도 없는 값이 헤더의 「동작점:」에 찍힌다 —
+    그 줄은 이 표가 어느 동작점에서 나왔는지를 남기는 자리라 거짓이 되면 안 된다.
+    """
+    names = {f.name for f in fields(Params)}
+    name, _, vals = spec.partition("=")
+    if name not in names or not vals:
+        raise ValueError(f"--rate-sweep 형식은 필드=값,값 — 필드는 {sorted(names)}")
+    if getattr(given, name) != getattr(Params(), name):
+        raise ValueError(f"--{name.replace('_', '-')} 와 --rate-sweep {name}=… 을 함께 줄 수 없다 "
+                         f"— 스윕이 행마다 덮어쓴다")
+    try:
+        values = [float(v) for v in vals.split(",")]
+    except ValueError:
+        # 44클립 재계산을 다시 돌리게 하는 명령이라 실패는 첫 줄에서 읽혀야 한다 (🟡2)
+        raise ValueError(f"--rate-sweep 값은 숫자여야 한다 — 받은 것: {vals}") from None
+    return name, values
+
+
 def params_from_args(a) -> Params:
     """`--surge-of-quiet` 같은 인자를 Params로. 기본값은 Params 자신의 것이다."""
     return Params(**{f.name: getattr(a, f.name) for f in fields(Params)})
@@ -351,17 +373,37 @@ def _selftest() -> int:
 
         # 동작점 인자 — 필드가 실제로 탐지기에 닿아야 한다. 무한대 급등 배수면 0건,
         # 기본값이면 기본 실행과 같은 건수. 인자를 Params에 안 넘기면 두 줄이 같아져 깨진다.
-        sweep, _ = rate_sweep(clip_audio, "surge_of_quiet", [5.0, 1e9], Params())
+        # **분모를 analyse와 대조한다** (#36 리뷰 「짧은 것」) — 본문이 스윕 건/분을 §4 값과
+        # 나란히 놓으므로, 두 경로의 duration 기준이 어긋나면 그 비교부터 성립하지 않는다.
+        sweep, sweep_total = rate_sweep(clip_audio, "surge_of_quiet", [5.0, 1e9], Params())
+        _, base_per_min, base_total = analyse(clip_audio, truth, Params(), lookaheads=[3.0])
         cli = argparse.Namespace(**{f.name: f.default for f in fields(Params)})
         cli.surge_of_quiet = 20.0
-        n_default = sum(len(run(extract(*load_wav(w)), Params(), clip_id=c))
-                        for c, w in clip_audio.items())
-        sweep_ok = (sweep[0][1] == n_default > 0 and sweep[1][1] == 0
+        denom_ok = (abs(sweep_total - base_total) < 1e-9
+                    and abs(sweep[0][2] - base_per_min) < 1e-9 and sweep[0][1] > 0)
+
+        # 스윕 명세 — 같은 필드를 인자로도 주면 거부한다 (🟡1), 숫자가 아니면 곱게 받는다 (🟡2)
+        def _sweep_err(spec, given=Params()):
+            try:
+                parse_rate_sweep(spec, given)
+            except ValueError as e:
+                return str(e)
+            return ""
+        spec_ok = (
+            parse_rate_sweep("surge_of_quiet=5,20", Params()) == ("surge_of_quiet", [5.0, 20.0])
+            and "함께 줄 수 없다" in _sweep_err("surge_of_quiet=5,60", Params(surge_of_quiet=20.0))
+            and not _sweep_err("cooldown_s=0.2,2", Params(surge_of_quiet=20.0))  # 다른 필드는 막지 않는다
+            and "숫자여야 한다" in _sweep_err("surge_of_quiet=5,abc")
+            and "숫자여야 한다" in _sweep_err("surge_of_quiet=5,,20")
+            and "형식은" in _sweep_err("nope=5") and "형식은" in _sweep_err("surge_of_quiet=")
+        )
+        sweep_ok = (denom_ok and spec_ok and sweep[1][1] == 0
                     and params_from_args(cli) == Params(surge_of_quiet=20.0)
                     and changed_params(Params()) == "동작점: 기본 임계값"
                     and changed_params(params_from_args(cli)) == "동작점: surge_of_quiet=20")
         print(f"발화율 스윕: 기본 {sweep[0][1]}건 · 급등 배수 무한대 {sweep[1][1]}건 · "
-              f"인자 → Params {'통과' if sweep_ok else '실패'}")
+              f"분모 {sweep_total:.3f}초 = analyse {base_total:.3f}초 "
+              f"{'일치' if denom_ok else '어긋남'} · 명세 검사 {'통과' if spec_ok else '실패'}")
 
         ok = (
             sweep_ok
@@ -411,10 +453,10 @@ def main() -> int:
             ap.error("--rate-sweep은 라벨을 읽지 않는다 — 동작점은 라벨을 보기 전에 고른다. --labels를 빼라")
         if not a.audio:
             ap.error("--rate-sweep에는 --audio가 필요하다")
-        name, _, vals = a.rate_sweep.partition("=")
-        names = {f.name for f in fields(Params)}
-        if name not in names or not vals:
-            ap.error(f"--rate-sweep 형식은 필드=값,값 — 필드는 {sorted(names)}")
+        try:
+            name, values = parse_rate_sweep(a.rate_sweep, params)
+        except ValueError as e:
+            ap.error(str(e))
         audio = {p.stem: p for p in Path(a.audio).glob("*.wav")}
         ids = L.load_clips(a.clips) if a.clips else sorted(audio)
         used = {c: audio[c] for c in ids if c in audio}
@@ -424,7 +466,7 @@ def main() -> int:
         missing = [c for c in ids if c not in audio]
         if missing:
             print(f"경고: wav 없는 클립 {missing}", file=sys.stderr)
-        table, total = rate_sweep(used, name, [float(v) for v in vals.split(",")], params)
+        table, total = rate_sweep(used, name, values, params)
         print(f"클립 {len(used)}/{len(ids)}개 · {total / 60:.1f}분 · {changed_params(params)} "
               f"· 라벨 미사용 — 오탐률이 아니라 발화율")
         print(f"| {name} | 탐지 | 건/분 |\n|---|---|---|")
