@@ -145,8 +145,9 @@ python3 -m eval.e1 --audio _local/dataset/wav --clips _local/dataset/clips.csv \
   --rate-sweep surge_of_quiet=5,20,35,60
 ```
 
-44클립·212.7분(2026.09.15)에서 6.37 · 2.19 · 1.18 · 0.49건/분이다. labeling-guide §4의
-6.53 · 2.36 · 1.27 · 0.51은 절단 도중 165분에서 잰 값이라 다르다.
+44클립·212.7분(2026.09.15)에서 6.37 · 2.19 · 1.18 · 0.49건/분이고, 같은 표가
+[labeling-guide §4](../docs/labeling-guide.md#4-클립-수집과-절단)에 실려 있다.
+6.53 · 2.36 · 1.27 · 0.51은 **33클립 165분에서 잰 옛 값**으로, §4에 경위로 남아 있다.
 
 **데이터 없이 파이프라인만 점검:**
 
@@ -191,7 +192,8 @@ python3 -m eval.e1 --selftest
 | `features.py` | RMS · **dRMS/dt** · 스펙트럼 플럭스 · 직전 정적 · 감쇠 최댓값 |
 | `detect.py` | 규칙 탐지기. 확신 시각·onset 추정·`clip_id`를 기록한다 |
 | `evaluate.py` | 같은 클립 안 onset ±0.5초 매칭(§6), P/R/F1 + 적시성 + 잡은 것 중 제때 + 탐지 지연 분포 요약 |
-| `e1.py` | lookahead 스윕, 표 출력, 자체 점검 |
+| `e1.py` | lookahead 스윕, 표 출력, 발화율 스윕(`--rate-sweep`), 자체 점검 |
+| `iaa.py` | 주석자 간 일치도 — 사건 매칭 κ · 100 ms 구간 κ · PSA를 한 번에 ([labeling-guide §6](../docs/labeling-guide.md#6-주석자-간-일치도)) |
 
 **홉은 10 ms다.** PoC의 50 ms로는 놀람 반사 문헌이 말하는 2~100 ms 상승 시간을
 분해할 수 없었다(`poc/README.md` 탐지 절).
