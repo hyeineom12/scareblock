@@ -86,9 +86,7 @@ def detections_per_minute(dets: list[Detection], duration_s: float) -> float:
     """분당 발화 수. 라벨을 쓰지 않으므로 오탐률이 아니라 발화율이다.
 
     같은 축의 실측 — PoC 104초 관측(`poc/README.md` 「탐지 오탐 — 104초에 9건」 → 5.2건/분)과
-    평가셋 212.7분 스윕(기본 임계값 6.37건/분, 2026.09.15 · 44클립). `docs/labeling-guide.md` §4는
-    아직 33클립 165분·6.53건/분으로 적혀 있다 — 그 문단은 동작점 결정 근거라 라벨 기준과 함께
-    고친다(#35 P0-10). 「사건 빽빽 7.9건/분」은
-    출처가 없어 뺐다.
+    평가셋 212.7분 스윕(기본 임계값 6.37건/분, 2026.09.15 · 44클립 — `docs/labeling-guide.md` §4).
+    「사건 빽빽 7.9건/분」은 출처가 없어 뺐다.
     """
     return len(dets) / (duration_s / 60.0) if duration_s > 0 else 0.0
