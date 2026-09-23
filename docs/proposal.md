@@ -6,7 +6,7 @@
 |---|---|
 | 팀 | 엄혜인([@hyeineom12](https://github.com/hyeineom12), 시스템·브라우저) · 이수현([@nocked115](https://github.com/nocked115), 모델·데이터·평가) |
 | 기간 | 2026.09.08 – 12.10 |
-| 저장소 | https://github.com/hyeineom12/scareblock |
+| 저장소 | https://github.com/scareblock/scareblock |
 
 > 과목 제출 양식이 확정되지 않아 일반적인 제안서 구조로 작성했다. 양식이 나오면 절 순서만 맞춘다.
 
