@@ -24,6 +24,7 @@ M1을 위한 MV3 뼈대. **탐지는 아직 가짜다** — 계약대로 넘기�
 
 ```js
 scareblock.stats()          // 계측값 + M1 판정
+scareblock.measure(true)    // 렌더 계측 켜기 (기본 꺼짐)
 scareblock.renderTiming()   // 렌더 시간 — eval 의 --render-s 용
 scareblock.blurNow()        // 지금 장면을 도달 전에 가린다
 scareblock.stop()           // 원복
@@ -35,8 +36,13 @@ scareblock.stop()           // 원복
 렌더링 시간이 없으면 p90이 하한으로만 쓰인다. 그 값을 여기서 잰다.
 
 ```js
-scareblock.renderTiming()
+scareblock.measure(true)     // 켜고
+// … 1분쯤 재생 …
+scareblock.renderTiming()    // 읽는다
 ```
+
+**기본은 꺼져 있다.** 프레임당 `performance.now()` 2회가 M1 측정에 섞이지 않게 하려는 것이고,
+데모 경로에도 계측 비용이 있으면 안 된다. 켤 때 표본을 비우고 새로 모은다.
 
 | 항목 | 뜻 |
 |---|---|

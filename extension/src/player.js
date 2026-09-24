@@ -41,6 +41,9 @@ SB.Player = class {
 
     // 렌더 시간 계측 — eval 의 --render-s 를 실측으로 채우기 위한 것.
     // 블러 프레임과 일반 프레임을 나눠 재야 "블러가 얼마나 더 드는가"가 나온다.
+    // 기본은 꺼둔다. 켜는 것은 `scareblock.measure(true)` 뿐이고, 데모·평상시
+    // 경로에는 프레임당 비용이 없어야 한다.
+    this._measuring = false;
     this._tBlurDraw = new SB.Samples();
     this._tPlainDraw = new SB.Samples();
     this._tBlurGap = new SB.Samples();
@@ -325,13 +328,14 @@ SB.Player = class {
     const slot = this.ring.findAtOrBefore(this.video.currentTime - cfg.DELAY_SEC);
     if (slot) {
       const hit = this.triggerAt(slot.t);
-      const drawAt = performance.now();
+      const drawAt = this._measuring ? performance.now() : 0;
       octx.filter = hit ? `blur(${cfg.BLUR_PX}px)` : 'none';
       octx.drawImage(slot.canvas, 0, 0, cfg.BUF_W, cfg.BUF_H);
       octx.filter = 'none';
-      const drawMs = performance.now() - drawAt;
-      (hit ? this._tBlurDraw : this._tPlainDraw).push(drawMs);
-      if (gap > 0) (hit ? this._tBlurGap : this._tPlainGap).push(gap);
+      if (this._measuring) {
+        (hit ? this._tBlurDraw : this._tPlainDraw).push(performance.now() - drawAt);
+        if (gap > 0) (hit ? this._tBlurGap : this._tPlainGap).push(gap);
+      }
       const want = hit ? cfg.FADE_DB : 1;            // 음량 페이드다운
       if (want !== this._gainNow) {
         this._gainNow = want;
@@ -416,7 +420,24 @@ SB.Player = class {
    * draw 시간은 CPU가 명령을 넣는 시간이라 GPU 완료를 포함하지 않는다.
    * 그래서 프레임 간격도 함께 본다 — 블러가 비싸면 간격이 늘어난다.
    */
+  /** 계측 on/off. 켜면 표본을 비우고 새로 모은다. */
+  measure(on = true) {
+    this._measuring = !!on;
+    if (on) {
+      this._tBlurDraw.reset();
+      this._tPlainDraw.reset();
+      this._tBlurGap.reset();
+      this._tPlainGap.reset();
+      this._measureFrom = this.stats.renderFrames;
+    }
+    SB.log(on ? '렌더 계측 켬 — 1분쯤 뒤 renderTiming()' : '렌더 계측 끔');
+    return this._measuring;
+  }
+
   renderTiming() {
+    if (!this._measuring && !this._tBlurDraw.count) {
+      return { 안내: '계측이 꺼져 있다. scareblock.measure(true) 로 켜고 1분쯤 뒤에 다시 부른다.' };
+    }
     const sec = (performance.now() - this.stats.startedAt) / 1000;
     const frameMs = sec > 0 && this.stats.renderFrames
       ? 1000 / (this.stats.renderFrames / sec) : null;
