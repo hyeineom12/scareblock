@@ -38,6 +38,13 @@ SB.Player = class {
     this._hudLine1 = '';
     this._hudLine2 = '';
     this._gainNow = 1;
+
+    // 렌더 시간 계측 — eval 의 --render-s 를 실측으로 채우기 위한 것.
+    // 블러 프레임과 일반 프레임을 나눠 재야 "블러가 얼마나 더 드는가"가 나온다.
+    this._tBlurDraw = new SB.Samples();
+    this._tPlainDraw = new SB.Samples();
+    this._tBlurGap = new SB.Samples();
+    this._tPlainGap = new SB.Samples();
   }
 
   /**
@@ -297,6 +304,7 @@ SB.Player = class {
     if (!this.running) return;
     const { octx, cfg } = this;
     const now = performance.now();
+    const gap = this._lastRenderAt ? now - this._lastRenderAt : 0;
     if (this._lastRenderAt && now - this._lastRenderAt > cfg.STALL_MS) {
       this.stats.renderStalls++;
       this._lastIncidentAt = now;
@@ -317,9 +325,13 @@ SB.Player = class {
     const slot = this.ring.findAtOrBefore(this.video.currentTime - cfg.DELAY_SEC);
     if (slot) {
       const hit = this.triggerAt(slot.t);
+      const drawAt = performance.now();
       octx.filter = hit ? `blur(${cfg.BLUR_PX}px)` : 'none';
       octx.drawImage(slot.canvas, 0, 0, cfg.BUF_W, cfg.BUF_H);
       octx.filter = 'none';
+      const drawMs = performance.now() - drawAt;
+      (hit ? this._tBlurDraw : this._tPlainDraw).push(drawMs);
+      if (gap > 0) (hit ? this._tBlurGap : this._tPlainGap).push(gap);
       const want = hit ? cfg.FADE_DB : 1;            // 음량 페이드다운
       if (want !== this._gainNow) {
         this._gainNow = want;
@@ -392,6 +404,34 @@ SB.Player = class {
     octx.font = '13px ui-monospace, monospace';
     octx.fillText(this._hudLine1, 14, cfg.BUF_H - 34);
     octx.fillText(this._hudLine2, 14, cfg.BUF_H - 16);
+  }
+
+  /**
+   * 렌더 시간 — eval 의 `--render-s` 용.
+   *
+   * 블러 결정은 그 프레임을 그리는 rAF 콜백 안에서 일어나고, 픽셀은 다음
+   * 합성 시점에 보인다. 그래서 **결정 → 화면**은 `draw 시간 + 한 프레임 주기`다.
+   * 캔버스의 실제 제시 시각은 관측할 수 없으므로 이 값은 **근사**다.
+   *
+   * draw 시간은 CPU가 명령을 넣는 시간이라 GPU 완료를 포함하지 않는다.
+   * 그래서 프레임 간격도 함께 본다 — 블러가 비싸면 간격이 늘어난다.
+   */
+  renderTiming() {
+    const sec = (performance.now() - this.stats.startedAt) / 1000;
+    const frameMs = sec > 0 && this.stats.renderFrames
+      ? 1000 / (this.stats.renderFrames / sec) : null;
+    const blur = this._tBlurDraw.summary();
+    const suggest = blur && frameMs ? (blur.p90 + frameMs) / 1000 : null;
+    return {
+      블러프레임_draw_ms: blur,
+      일반프레임_draw_ms: this._tPlainDraw.summary(),
+      블러프레임_간격_ms: this._tBlurGap.summary(),
+      일반프레임_간격_ms: this._tPlainGap.summary(),
+      평균프레임주기_ms: frameMs ? +frameMs.toFixed(2) : null,
+      경과초: +sec.toFixed(1),
+      'render_s(제안)': suggest ? +suggest.toFixed(4) : null,
+      근거: 'render_s = p90(블러 draw) + 한 프레임 주기. 캔버스 제시 시각은 관측 불가라 근사값.',
+    };
   }
 
   report() {
