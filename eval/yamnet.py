@@ -29,7 +29,14 @@ from .detect import Detection, detections_per_minute
 from .features import load_wav
 
 MODEL = Path("_local/models/yamnet/yamnet.onnx")
-WIN_S = 0.96      # YAMNet 분석 창
+PATCH_S = 0.96     # YAMNet 패치 창 (공식 params.patch_window_seconds)
+STFT_WIN_S = 0.025 # params.stft_window_seconds
+STFT_HOP_S = 0.010 # params.stft_hop_seconds
+# 패치는 STFT 프레임 96개고, **실제로 덮는 오디오는 0.975초**다 —
+# (96−1)×0.010 + 0.025. 공식 features.pad_waveform도 최소 길이를 이 식으로 잡는다.
+# 확신 시각을 0.96으로 잡으면 모델이 본 마지막 샘플보다 15 ms 앞서고, 그러면
+# 「규칙 탐지기의 t_ready와 같은 정의」라는 이 열의 전제가 깨진다 (#43 리뷰 🟡1).
+WIN_S = round((PATCH_S / STFT_HOP_S - 1) * STFT_HOP_S + STFT_WIN_S, 6)   # 0.975
 HOP_S = 0.48      # 창 간격
 SR = 16000        # 모델이 기대하는 표본율. clipcut이 뽑는 wav와 같다
 
@@ -89,8 +96,10 @@ def to_detections(peak: np.ndarray, threshold: float, clip_id: str = "") -> list
       - `onset`(시작 추정) = **묶음 첫 창의 시작** — YAMNet은 되짚기를 하지 않으므로
         창 경계가 말할 수 있는 전부다. 해상도가 0.48초라 ±0.5초 매칭(§6)과 같은 눈금이다
 
-    `onset_capped`를 True로 둔다 — 되짚기로 얻은 값이 아니라 **창 경계일 뿐**이라는 표시다.
-    리포트가 이 비율을 세므로, 규칙 탐지기와 섞여도 어느 쪽 onset인지 구분된다.
+    `source="yamnet"`으로 표시한다. **`onset_capped`는 쓰지 않는다** — 그 필드는 「되짚기가
+    상한에 걸렸다 = 추정 실패」라는 뜻이고(`detect.py`), 리포트가 그걸 「onset 되짚기 상한 N건」
+    으로 센다. YAMNet은 되짚기를 아예 하지 않으므로 그 칸에 들어가면 **되짚기 실패율로 읽힌다**
+    (#43 리뷰 🟡2).
     """
     out: list[Detection] = []
     i, n = 0, len(peak)
@@ -103,7 +112,7 @@ def to_detections(peak: np.ndarray, threshold: float, clip_id: str = "") -> list
             j += 1
         out.append(Detection(onset=i * HOP_S, fire=j * HOP_S + WIN_S,
                              score=float(peak[i:j + 1].max()),
-                             clip_id=clip_id, onset_capped=True))
+                             clip_id=clip_id, source="yamnet"))
         i = j + 1
     return out
 
@@ -158,7 +167,19 @@ def _selftest() -> int:
           f"{'통과' if subset_ok else '실패'}")
     ok &= subset_ok
 
-    # ⑤ 사전 등록 목록이 바뀌지 않았다 (#35 09.25)
+    # ⑤ 덮는 길이는 패치 0.96초가 아니라 0.975초다 — 여기가 되돌아가면 YAMNet 지연이
+    #    전부 15 ms 짧게 나오고 「규칙 탐지기와 같은 정의」가 아니게 된다 (#43 리뷰 🟡1)
+    cover_ok = abs(WIN_S - 0.975) < 1e-9 and WIN_S > PATCH_S
+    print(f"덮는 오디오: 패치 {PATCH_S}초 → {WIN_S}초 {'통과' if cover_ok else '실패'}")
+    ok &= cover_ok
+
+    # ⑥ source로 표시하고 onset_capped는 건드리지 않는다 — 그 필드는 「되짚기 실패」다 (🟡2)
+    src_ok = all(x.source == "yamnet" and not x.onset_capped for x in d)
+    print(f"출처 표시: source={d[0].source} · onset_capped={d[0].onset_capped} "
+          f"{'통과' if src_ok else '실패'}")
+    ok &= src_ok
+
+    # ⑦ 사전 등록 목록이 바뀌지 않았다 (#35 09.25)
     reg_ok = len(CLASSES) == 20 and 11 in CLASSES and 420 in CLASSES and 0 not in CLASSES
     print(f"등록 목록: {len(CLASSES)}개 {'통과' if reg_ok else '실패'}")
     ok &= reg_ok
@@ -213,7 +234,7 @@ def main() -> int:
     rows = sweep(peaks, ths, total_s)
     print(f"클립 {len(used)}/{len(ids)}개 · {total_s / 60:.1f}분 · YAMNet 사전학습 "
           f"{len(CLASSES)}개 클래스 최댓값 · 라벨 미사용 — 오탐률이 아니라 발화율")
-    print(f"창 {WIN_S}초 · 간격 {HOP_S}초 — 확신 시각은 창의 끝이라 "
+    print(f"패치 {PATCH_S}초(덮는 오디오 {WIN_S}초) · 간격 {HOP_S}초 — 확신 시각은 창의 끝이라 "
           f"**구조적으로 {WIN_S}초 늦는다**\n")
     print("| 임계값 | 탐지 | 건/분 |\n|---|---|---|")
     for t, n, r in rows:
