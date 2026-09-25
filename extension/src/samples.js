@@ -22,24 +22,34 @@ SB.Samples = class {
     return Math.min(this.seen, this.buf.length);
   }
 
-  /** 선형 보간 없는 최근접 순위 백분위수. p는 0~100. */
+  /**
+   * 선형 보간 없는 최근접 순위 백분위수. p는 0~100.
+   *
+   * eval/evaluate.py 의 latency_summary 는 np.percentile(선형 보간)이라 정의가 다르다.
+   * 최근접 순위는 실제 표본 중 하나를 고르고 보간값 이상이 되므로 더 보수적이다
+   * — render_s 를 부풀리는 쪽이라 적시성 판정에는 안전한 방향이다(#42 리뷰 🟢).
+   */
   percentile(p) {
     const n = this.count;
-    if (!n) return null;
-    const sorted = Float64Array.prototype.slice.call(this.buf, 0, n).sort();
-    const i = Math.min(n - 1, Math.max(0, Math.ceil(p / 100 * n) - 1));
-    return sorted[i];
+    return n ? SB.Samples._rank(this._sorted(), p) : null;
   }
 
+  /** 보고할 때 한 번만 정렬해 세 값을 뽑는다. */
   summary() {
     const n = this.count;
     if (!n) return null;
-    return {
-      n,
-      p50: +this.percentile(50).toFixed(2),
-      p90: +this.percentile(90).toFixed(2),
-      max: +this.percentile(100).toFixed(2),
-    };
+    const sorted = this._sorted();
+    const at = (p) => +SB.Samples._rank(sorted, p).toFixed(2);
+    return { n, p50: at(50), p90: at(90), max: at(100) };
+  }
+
+  _sorted() {
+    return Float64Array.prototype.slice.call(this.buf, 0, this.count).sort();
+  }
+
+  static _rank(sorted, p) {
+    const n = sorted.length;
+    return sorted[Math.min(n - 1, Math.max(0, Math.ceil(p / 100 * n) - 1))];
   }
 
   reset() {

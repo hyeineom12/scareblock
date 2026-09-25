@@ -48,6 +48,12 @@ SB.Player = class {
     this._tPlainDraw = new SB.Samples();
     this._tBlurGap = new SB.Samples();
     this._tPlainGap = new SB.Samples();
+    // 계측 구간 — 평균 프레임 주기를 세션 전체가 아니라 이 구간에서 낸다(#42 리뷰 🟡1).
+    this._measureFrom = 0;      // 계측 시작 시점의 renderFrames
+    this._measureAt = 0;        // 계측 시작 시각
+    this._measureEnd = null;    // 계측을 끈 시점 { frames, at } — 켜져 있으면 null
+    // 간격은 직전 프레임이 한 일의 비용이다. 직전 프레임의 블러 여부로 분류한다(#42 리뷰 🟡2).
+    this._prevHit = null;       // null = 직전 프레임이 없거나 버퍼 채우는 중
   }
 
   /**
@@ -211,6 +217,7 @@ SB.Player = class {
       // 같은 이유로 rAF도 멈춰 있었다. 복귀 첫 프레임의 간격(수 초)을 끊김으로
       // 세면 탭을 전환할 때마다 M1 연속 무드롭이 리셋된다.
       this._lastRenderAt = 0;
+      this._prevHit = null;
       this.stats.resyncs++;
     };
 
@@ -334,7 +341,12 @@ SB.Player = class {
       octx.filter = 'none';
       if (this._measuring) {
         (hit ? this._tBlurDraw : this._tPlainDraw).push(performance.now() - drawAt);
-        if (gap > 0) (hit ? this._tBlurGap : this._tPlainGap).push(gap);
+        // gap은 직전 프레임 → 지금이라 직전 프레임의 비용이다. 이번 hit으로 나누면
+        // 버스트 경계마다 한 프레임씩 반대 칸에 들어간다.
+        if (gap > 0 && this._prevHit !== null) {
+          (this._prevHit ? this._tBlurGap : this._tPlainGap).push(gap);
+        }
+        this._prevHit = !!hit;
       }
       const want = hit ? cfg.FADE_DB : 1;            // 음량 페이드다운
       if (want !== this._gainNow) {
@@ -343,6 +355,7 @@ SB.Player = class {
       }
       if (hit) this._drawBadge(hit);
     } else {
+      this._prevHit = null;
       octx.fillStyle = '#000';
       octx.fillRect(0, 0, cfg.BUF_W, cfg.BUF_H);
       octx.fillStyle = '#fff';
@@ -429,6 +442,11 @@ SB.Player = class {
       this._tBlurGap.reset();
       this._tPlainGap.reset();
       this._measureFrom = this.stats.renderFrames;
+      this._measureAt = performance.now();
+      this._measureEnd = null;
+      this._prevHit = null;
+    } else if (this._measureAt && !this._measureEnd) {
+      this._measureEnd = { frames: this.stats.renderFrames, at: performance.now() };
     }
     SB.log(on ? '렌더 계측 켬 — 1분쯤 뒤 renderTiming()' : '렌더 계측 끔');
     return this._measuring;
@@ -438,9 +456,13 @@ SB.Player = class {
     if (!this._measuring && !this._tBlurDraw.count) {
       return { 안내: '계측이 꺼져 있다. scareblock.measure(true) 로 켜고 1분쯤 뒤에 다시 부른다.' };
     }
-    const sec = (performance.now() - this.stats.startedAt) / 1000;
-    const frameMs = sec > 0 && this.stats.renderFrames
-      ? 1000 / (this.stats.renderFrames / sec) : null;
+    // 계측 구간만 쓴다. 세션 전체 평균이면 기동 직후 끊김 구간이 섞여 주기가
+    // 길게 나오고 render_s가 부풀려진다.
+    const end = this._measureEnd
+      || { frames: this.stats.renderFrames, at: performance.now() };
+    const sec = (end.at - this._measureAt) / 1000;
+    const frames = end.frames - this._measureFrom;
+    const frameMs = sec > 0 && frames > 0 ? 1000 * sec / frames : null;
     const blur = this._tBlurDraw.summary();
     const suggest = blur && frameMs ? (blur.p90 + frameMs) / 1000 : null;
     return {
@@ -449,7 +471,7 @@ SB.Player = class {
       블러프레임_간격_ms: this._tBlurGap.summary(),
       일반프레임_간격_ms: this._tPlainGap.summary(),
       평균프레임주기_ms: frameMs ? +frameMs.toFixed(2) : null,
-      경과초: +sec.toFixed(1),
+      계측초: +sec.toFixed(1),
       'render_s(제안)': suggest ? +suggest.toFixed(4) : null,
       근거: 'render_s = p90(블러 draw) + 한 프레임 주기. 캔버스 제시 시각은 관측 불가라 근사값.',
     };

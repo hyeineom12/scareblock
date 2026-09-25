@@ -76,4 +76,12 @@ ok('reset 뒤에는 비어 있다', () => {
   assert.strictEqual(s.summary(), null);
 });
 
-console.log(`\n${pass}/8 통과`);
+ok('summary 는 percentile 과 같은 값을 낸다 (한 번 정렬)', () => {
+  const s = fill(new Samples(8), [9, 3, 7, 1, 5, 2, 8, 4, 6, 10]);  // 용량 초과 포함
+  const r = s.summary();
+  assert.strictEqual(r.p50, s.percentile(50));
+  assert.strictEqual(r.p90, s.percentile(90));
+  assert.strictEqual(r.max, s.percentile(100));
+});
+
+console.log(`\n${pass}/9 통과`);
